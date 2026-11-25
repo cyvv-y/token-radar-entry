@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch Radar — pre-token protocols ranked by what a token launch would be worth</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="mast">
+  <div class="mast-in">
+    <p class="kicker">TOKEN LAUNCH RADAR</p>
+    <h1>Protocols that record no token yet,<br>ranked by what a launch would be worth.</h1>
+    <p class="sub" id="sub">Loading the board…</p>
+  </div>
+</header>
+<main>
+  <section class="panel model" id="model"></section>
+  <section class="panel">
+    <div class="controls">
+      <input id="q" type="search" placeholder="Search name, slug or chain…" aria-label="Search">
+      <select id="cat" aria-label="Category"></select>
+      <select id="sort" aria-label="Sort">
+        <option value="implied">Sort: implied value</option>
+        <option value="tvl">Sort: TVL</option>
+        <option value="growth">Sort: 7-day growth</option>
+        <option value="age">Sort: time tokenless</option>
+        <option value="multiple">Sort: category multiple</option>
+      </select>
+      <label class="chk"><input id="wl" type="checkbox"> Watchlist only</label>
+      <button id="tab-live" type="button">Already trading</button>
+    </div>
+    <p class="count" id="count"></p>
+    <div class="tablewrap">
+      <table id="board">
+        <thead><tr>
+          <th class="num">#</th><th>Protocol</th><th>Category</th><th>Chains</th>
+          <th class="num">TVL</th><th class="num">7d</th><th class="num">Multiple</th><th class="num">Implied value</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <table id="live" hidden>
+        <thead><tr>
+          <th>Protocol</th><th>Category</th><th>Chains</th>
+          <th class="num">TVL</th><th class="num">Market cap</th><th class="num">Actual mcap/TVL</th><th class="num">7d</th>
+        </tr></thead>
+        <tbody id="liverows"></tbody>
+      </table>
+    </div>
+    <p class="hint">Select any row for its valuation workings and its farm plan.</p>
+  </section>
+  <section class="panel detail" id="detail" hidden></section>
+  <footer>
+    <p>Implied value is this entry's own claim, computed only from the snapshot's figures — it is not a
+    prediction that a token will be issued. “Records no token” means the snapshot carries no CoinGecko id
+    and no symbol for the protocol. Farm plans are checklists, not financial advice.</p>
+  </footer>
+</main>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

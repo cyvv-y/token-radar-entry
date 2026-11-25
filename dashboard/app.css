@@ -1,0 +1,58 @@
+/* Launch Radar page: a dark scope-screen theme, one accent, tabular figures. */
+:root{
+  --bg:#0b0f0e; --panel:#121715; --panel2:#171d1a; --line:#26302a;
+  --ink:#e8ece9; --dim:#9aa79e; --faint:#6b7a70;
+  --accent:#ffb454; --good:#5fd68b; --bad:#ff7a6b;
+  --mono:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{color-scheme:dark}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 -apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
+.mast{border-bottom:1px solid var(--line);
+  background:radial-gradient(720px 300px at 18% -40%,rgba(255,180,84,.16),transparent 70%),var(--panel)}
+.mast-in{max-width:1180px;margin:0 auto;padding:34px 22px 26px}
+.kicker{margin:0 0 8px;color:var(--accent);font:700 12px var(--mono);letter-spacing:.24em}
+h1{margin:0;font-size:30px;line-height:1.2;font-weight:750;letter-spacing:-.01em}
+.sub{margin:12px 0 0;color:var(--dim);max-width:72ch}
+main{max-width:1180px;margin:0 auto;padding:20px 22px 40px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:18px 20px;margin:0 0 18px}
+.model h2,.detail h2{margin:0 0 8px;font-size:17px}
+.model p{margin:6px 0;color:var(--dim)}
+.model .formula{font-family:var(--mono);font-size:13.5px;color:var(--ink);
+  background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px 12px;overflow-x:auto;white-space:nowrap}
+.mult{margin:12px 0 2px;font-size:13px;color:var(--dim)}
+.mult b{color:var(--ink);font-family:var(--mono);font-weight:600}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.controls input[type=search]{flex:1 1 220px}
+.controls input,.controls select,.controls button{
+  background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:8px 10px;font:inherit;font-size:14px}
+.controls button{cursor:pointer}
+.controls button.on{border-color:var(--accent);color:var(--accent)}
+.chk{color:var(--dim);font-size:14px;display:flex;gap:6px;align-items:center}
+.count{color:var(--faint);font-size:13px;margin:12px 0 6px;font-family:var(--mono)}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{ text-align:left;color:var(--faint);font-weight:600;font-size:12px;letter-spacing:.06em;
+  text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:7px 8px;border-bottom:1px solid #1b221e;vertical-align:top}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--panel2)}
+td.num,th.num{text-align:right;font-family:var(--mono);white-space:nowrap}
+td.name{font-weight:650}
+td.name .slug{display:block;color:var(--faint);font:400 12px var(--mono)}
+.pos{color:var(--good)} .neg{color:var(--bad)}
+.wl-dot{color:var(--accent);font-size:11px;vertical-align:super}
+.hint{color:var(--faint);font-size:13px;margin:10px 0 0}
+.detail h2 .slug{color:var(--faint);font:400 13px var(--mono);margin-left:8px}
+.detail .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
+.stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.stat .k{color:var(--faint);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em}
+.stat .v{font:600 17px var(--mono);margin-top:2px}
+.detail .work{color:var(--dim);margin:8px 0}
+.detail ol{margin:8px 0 4px;padding-left:22px}
+.detail li{margin:0 0 8px}
+footer{color:var(--faint);font-size:13px;max-width:82ch}
+@media (max-width:720px){ h1{font-size:24px} .panel{padding:14px} }
