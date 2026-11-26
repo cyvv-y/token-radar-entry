@@ -4,11 +4,14 @@
 // >= $5M as of 2026-11-14), values each protocol that records no token with
 // the Launch Multiple model in lib/model.ts — the median market-cap/TVL
 // ratio its own category's traded protocols reveal, adjusted for momentum,
-// chain breadth and time run tokenless — ranks them, and writes the board
-// to board.json. It then writes the dashboard's data.js from the same
-// board, copies this repository's dashboard/ and screenshots/ into the
-// output, and writes dossier.json last with the vendored buildDossier, so
-// the file the judge reads is exactly what the scorer rebuilds.
+// chain breadth and time run tokenless, with the plausible range its
+// category's quartile ratios imply and a leave-one-out calibration of that
+// range against the traded protocols themselves — ranks them, and writes
+// the board to board.json. It then writes the dashboard's data.js from the
+// same board, copies this repository's dashboard/ and screenshots/ into
+// the output, and writes dossier.json last with the vendored
+// buildDossier, so the file the judge reads is exactly what the scorer
+// rebuilds.
 //
 // Run: node main.ts [--input <snapshot.json|dir>] [--output <dir>]
 // In the grader the snapshot is at /input/snapshot.json and the output

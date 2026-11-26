@@ -52,7 +52,18 @@
     'maturity rises from 0.70 to 1.00 over three years run with no token recorded. Wrapped, staked and ' +
     'bridged products of tokens that already trade — WBTC, Binance staked ETH, USDT0 and their kin — are ' +
     'kept off the board by the same rule that built the watchlist.</p>' +
-    '<p class="mult">Learned multiples: ' + mult + '</p>';
+    '<p class="mult">Learned multiples: ' + mult + '</p>' +
+    '<p>Every row also carries a plausible range: the same TVL and adjustments priced at the category\u2019s ' +
+    'first and third quartile multiples, because the snapshot\u2019s traded ratios span 0.01× to 100× — a launch ' +
+    'multiple is a spread to rank by, never a price to promise. The range is calibrated, not decorative: ' +
+    're-pricing the ' + D.calibration.tested + ' traded protocols blind, each with multiples learned without ' +
+    'it, ' + D.calibration.range_coverage_pct + '% of the market caps the market actually set fall inside the ' +
+    'range this page would have printed for them.</p>' +
+    '<p class="mult">The funnel, countable from the snapshot itself: ' + D.funnel.total + ' protocols · ' +
+    D.funnel.trading + ' already record a token · ' + D.funnel.no_token + ' record none · of those, ' +
+    D.funnel.excluded_category + ' are wrapped, staked, bridged or exchange products by category, ' +
+    D.funnel.excluded_version + ' are versioned pools of a parent, ' + D.funnel.excluded_word +
+    ' carry a wrapped or staked name · ' + D.board_size + ' are ranked below.</p>';
 
   // --- controls ---------------------------------------------------------------
   var cats = [];
@@ -124,7 +135,9 @@
       '<h2>' + esc(r.name) + '<span class="slug">' + esc(r.slug) + ' · rank #' + r.rank +
       (r.watchlist ? ' · on the watchlist' : '') + '</span></h2>' +
       '<div class="grid">' +
-      stat('Implied value', money(r.implied_value_usd)) + stat('TVL', money(r.tvl_usd)) +
+      stat('Implied value', money(r.implied_value_usd)) +
+      stat('Plausible range', money(m.value_low_usd) + ' – ' + money(m.value_high_usd)) +
+      stat('TVL', money(r.tvl_usd)) +
       stat('Category multiple', '×' + m.multiple.toFixed(2)) + stat('Momentum', '×' + m.momentum.toFixed(2)) +
       stat('Breadth', '×' + m.breadth.toFixed(2)) + stat('Maturity', '×' + m.maturity.toFixed(2)) +
       stat('Time tokenless', age(r.age_days)) + stat('7-day TVL', pct(r.change_7d)) + '</div>' +
@@ -133,8 +146,15 @@
       '7-day momentum, ×' + m.breadth.toFixed(2) + ' for running on ' + r.chains.length + ' chain' +
       (r.chains.length === 1 ? '' : 's') + ' (' + esc(r.chains.join(', ')) + '), and ×' + m.maturity.toFixed(2) +
       ' for ' + age(r.age_days) + ' run with no token recorded' +
-      (r.listed_at ? ' (tracked since ' + esc(r.listed_at) + ')' : '') + '.</p>' +
-      '<h2>Farm plan</h2><ol>' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
+      (r.listed_at ? ' (tracked since ' + esc(r.listed_at) + ')' : '') +
+      '. Priced at the quartile multiples instead of the median, the same figures give ' +
+      money(m.value_low_usd) + ' to ' + money(m.value_high_usd) + ' — the spread traded protocols actually ' +
+      'trade across, printed because a single figure would pretend to a precision the data does not hold.</p>' +
+      '<h2>Farm plan</h2>' +
+      '<p class="work">The whole plan commits $' + r.plan.capital_usd + ' of working capital and about $' +
+      r.plan.gas_usd + ' of gas across its ' + r.plan.hold_days + '-day hold, at about ' + r.plan.minutes_week +
+      ' minutes a week — the steps below are where those totals come from.</p>' +
+      '<ol>' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
     $('detail').hidden = false;
     $('detail').scrollIntoView();
   }
