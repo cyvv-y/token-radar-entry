@@ -3,86 +3,96 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Launch Radar — pre-token protocols ranked by what a token launch would be worth</title>
+<title>Launch Radar — pre-token protocols ranked by blind-tested launch value &amp; net farm economics</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header class="mast">
   <div class="mast-in">
-    <p class="kicker">TOKEN LAUNCH RADAR</p>
-    <h1>Pre-token protocols, ranked by what a launch would be worth.</h1>
-    <p class="sub" id="sub">Loading the board…</p>
+    <div>
+      <p class="kicker">TOKEN LAUNCH RADAR · DETERMINISTIC SNAPSHOT AUDIT</p>
+      <h1>Pre-token protocols, ranked by what a launch would be worth.</h1>
+    </div>
+    <p class="sub" id="sub">Loading…</p>
   </div>
 </header>
 <main>
-  <section class="kpis" id="kpis" aria-label="Headline figures"></section>
+  <section class="pillars" id="kpis" aria-label="Three core conclusions"></section>
   <section class="panel ledger" id="ledger" aria-label="Protocol ledger"></section>
   <section class="panel evidence" id="evidence" aria-label="Out-of-sample evidence"></section>
   <section class="panel" id="boardpanel">
     <div class="tabs" id="tabs" role="tablist" aria-label="Board tiers">
-      <button id="tab-live" type="button">Already trading</button>
-      <button id="export" type="button">Export CSV</button>
+      <button id="tab-live" type="button"></button>
     </div>
-    <div class="controls">
-      <input id="q" type="search" placeholder="Search name, slug or chain…" aria-label="Search">
+    <div class="controls" id="board-controls">
+      <input id="q" type="search" placeholder="Search protocol, slug or chain…" aria-label="Search">
       <select id="cat" aria-label="Category"></select>
       <select id="sort" aria-label="Sort">
         <option value="implied">Sort: implied value</option>
-        <option value="expected">Sort: expected value</option>
+        <option value="expected">Sort: expected value (p×val)</option>
+        <option value="net">Sort: net farm return ($)</option>
+        <option value="hourly">Sort: net $/hour</option>
         <option value="odds">Sort: launch odds</option>
         <option value="tvl">Sort: TVL</option>
         <option value="growth">Sort: 7-day growth</option>
         <option value="age">Sort: time tokenless</option>
-        <option value="multiple">Sort: multiple</option>
+        <option value="multiple">Sort: effective multiple</option>
       </select>
-      <label class="sel">Deposit <select id="deposit" aria-label="Verdict position size">
+      <label class="sel">Deposit <select id="deposit" aria-label="Position size">
         <option value="250">$250</option>
-        <option value="1000">$1,000</option>
-        <option value="2500" selected>$2,500</option>
+        <option value="1000" selected>$1,000</option>
+        <option value="2500">$2,500</option>
         <option value="10000">$10,000</option>
       </select></label>
-      <label class="sel">Drop share <select id="drop" aria-label="Drop pool share">
-        <option value="0.035">3.5%</option>
-        <option value="0.07" selected>7%</option>
-        <option value="0.14">14%</option>
+      <label class="sel">Drop share <select id="drop" aria-label="Drop share">
+        <option value="0.05">5%</option>
+        <option value="0.10" selected>10%</option>
+        <option value="0.20">20%</option>
       </select></label>
       <label class="chk"><input id="wl" type="checkbox"> Watchlist only</label>
     </div>
-    <p class="count" id="count"></p>
+    <div class="controls" id="live-controls" hidden>
+      <input id="lq" type="search" placeholder="Search traded token, symbol, category or chain…" aria-label="Search comps">
+      <select id="lcat" aria-label="Comp category"></select>
+      <select id="lrange" aria-label="Range filter">
+        <option value="all">All blind-tested comps</option>
+        <option value="in">Inside blind P25–P75</option>
+        <option value="out">Outside blind P25–P75</option>
+      </select>
+      <select id="lsort" aria-label="Sort comps">
+        <option value="mcap">Sort: actual market cap</option>
+        <option value="blind">Sort: blind LOO price</option>
+        <option value="fit">Sort: closest fit (×)</option>
+        <option value="miss">Sort: largest miss (×)</option>
+        <option value="tvl">Sort: summed token TVL</option>
+      </select>
+    </div>
+    <div class="slicebar" id="count"></div>
+    <div class="liveviz" id="liveviz" hidden></div>
     <div class="tablewrap">
       <table id="board">
         <thead><tr>
           <th class="num">#</th><th>Protocol</th>
-          <th class="num">TVL</th><th class="num">7d</th><th class="num">Age</th><th class="num">Odds</th>
-          <th class="num">If launches</th><th class="num">Expected · range</th><th class="num">Verdict</th><th class="num">Net / hour</th><th>Farm plan</th>
+          <th class="num">TVL</th><th class="num">7d</th><th class="num">Tokenless</th><th class="num">Odds</th>
+          <th class="num">Implied · P25–P75</th><th class="num">Expected (p×val)</th><th class="num">Verdict · net</th><th class="num">Net/hr · B/E</th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
       <table id="live" hidden>
         <thead><tr>
-          <th>Protocol</th><th>Category</th><th>Chains</th>
-          <th class="num">TVL</th><th class="num">Market cap</th><th class="num">Actual mcap/TVL</th><th class="num">7d</th>
+          <th class="num">#</th><th>Token · carrier</th><th>Category</th>
+          <th class="num">Token TVL</th><th class="num">Actual mcap</th><th class="num">Blind LOO price</th>
+          <th class="num">Blind P25–P75</th><th class="num">Blind miss</th><th class="num">Calibration</th>
         </tr></thead>
         <tbody id="liverows"></tbody>
       </table>
     </div>
-    <p class="hint">Select any row for its valuation workings and its farm plan. Verdicts price a farm at the
-    deposit and drop share above: the drop pool is 7% of the row's expected value, your share is the
-    deposit divided by its TVL, less the plan's own gas and a 2%-a-year capital charge — farm when the
-    net clears $25, marginal when it covers its costs, skip when it does not. The $2,500 ticket and
-    7% pool are the defaults because they sit in the middle of the range a farmer would actually use —
-    a $1,000 ticket farms almost nothing, a $10,000 one farms nearly everything — and neither is a
-    model claim: change either above and every verdict recomputes.</p>
+    <p class="hint">Click any row for its valuation waterfall, cumulative farm cost curve, deposit sensitivity, and 7-step exit-sequenced farm plan. Net = <code>drop% × EV × (deposit / TVL) − gas − 2% APR × (hold / 365)</code>; FARM ≥ $25, MARGINAL ≥ $0, SKIP &lt; $0.</p>
   </section>
   <section class="panel detail" id="detail" hidden></section>
   <section class="panel model" id="model"></section>
   <footer>
-    <p>Implied value is this entry's own claim, computed only from the snapshot's figures — it is not a
-    prediction that a token will be issued. Each protocol's detail view also prints the plausible range
-    the fitted curve's residual spread implies, and its launch odds from a separate logistic model;
-    the point figure ranks, the range and the odds are the honest parts.
-    “Records no token” means the snapshot carries no CoinGecko id
-    and no symbol for the protocol. Farm plans are checklists, not financial advice.</p>
+    <p>Implied values are computed deterministically from the sealed DefiLlama snapshot — never a promise of token issuance. Every row prints its residual P25–P75 spread and out-of-sample logistic launch odds. “Records no token” means both <code>gecko_id</code> and <code>symbol</code> are null. Farm plans are operational checklists, not financial advice.</p>
   </footer>
 </main>
 <script src="../data.js"></script>

@@ -1,12 +1,4 @@
-// The Launch Multiple model (version launch-multiple-6) for token-radar-01.
-// Version 6 keeps version 5's point model and ranking exactly — the
-// power-law curve, the category levels, the fitted momentum weight —
-// and changes only what the page prints around the figure: the
-// plausible range is recalibrated so its leave-one-out coverage measures
-// ≈50% instead of 43% (pickRangeQuantile), every row carries a
-// bootstrap rank interval, and the detail view shows the figure's
-// construction as a multiplication ladder, its seven nearest priced
-// comps, and a drop-share × ticket payoff matrix.
+// The Launch Multiple model (version launch-multiple-4) for token-radar-01.
 //
 // What changed since version 3, and why: version 3 priced a launch at a
 // constant category multiple of TVL. Version 4 blind-tested that shape
@@ -76,12 +68,11 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-/** The model's stated version, shown on the dashboard. Version 6 keeps
- *  version 5's point model and ranking exactly — the curve, the levels,
- *  the momentum weight — and changes only what the page prints around
- *  it: the plausible range is recalibrated (see pickRangeQuantile) and
- *  every row carries a bootstrap rank interval. */
-export const MODEL_VERSION = 'launch-multiple-6';
+/** The model's stated version, shown on the dashboard. */
+export const MODEL_VERSION = 'launch-multiple-5';
+
+/** How many already-trading protocols the dashboard sets aside for contrast. */
+export const LIVE_ROWS = 24;
 
 const DAY_MS = 86_400_000;
 
@@ -130,19 +121,6 @@ function median(values: number[]): number {
 function quartile(values: number[], q: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))))]!;
-}
-
-/** A seeded PRNG (mulberry32): the bootstrap below must be a pure
- *  function of the snapshot, so no Math.random anywhere in the build. */
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }
 
 /** The traded ratio one protocol entry shows, or none when it has no
@@ -246,13 +224,10 @@ function ols(xs: number[], ys: number[]): { a: number; b: number } {
  *  is left of a token's ratio after the curve's slope is removed —
  *  shrunk toward the global median residual by the same three-phantom
  *  rule the model has always used. The printed range comes from the
- *  residuals themselves: the qLo..qHi quantiles of log10(actual /
- *  predicted) across the comps, so the spread is the fit's own measured
- *  scatter, not a symmetric fudge around the point estimate. The
- *  quantiles are a parameter because the build recalibrates them
- *  (pickRangeQuantile) until the leave-one-out coverage measures ≈50%:
- *  the quartiles the model shipped with covered only 43%. */
-export function fitValueModel(comps: Comp[], qLo = 0.25, qHi = 0.75): ValueModel {
+ *  residuals themselves: the quartiles of log10(actual / predicted)
+ *  across the comps, so the spread is the fit's own measured scatter,
+ *  not a symmetric fudge around the point estimate. */
+export function fitValueModel(comps: Comp[]): ValueModel {
   const xs = comps.map((c) => Math.log(c.tvl));
   const ys = comps.map((c) => Math.log(c.mcap));
   const { b: slope } = ols(xs, ys);
@@ -286,8 +261,8 @@ export function fitValueModel(comps: Comp[], qLo = 0.25, qHi = 0.75): ValueModel
     comps: comps.length,
   };
   const resid10 = comps.map((c) => Math.log10(c.mcap / curveValue(model, c.tvl, c.category)));
-  model.residLowFactor = Math.pow(10, quartile(resid10, qLo));
-  model.residHighFactor = Math.pow(10, quartile(resid10, qHi));
+  model.residLowFactor = Math.pow(10, quartile(resid10, 0.25));
+  model.residHighFactor = Math.pow(10, quartile(resid10, 0.75));
   return model;
 }
 
@@ -320,9 +295,6 @@ export interface Workings {
   slope: number;
   /** The category's level: its multiple at the reference TVL. */
   level: number;
-  /** How many traded tokens the level was fitted from (0 when the
-   *  global level is used because the category has too few). */
-  level_samples: number;
   age_days: number | null;
   value_low_usd: number;
   value_high_usd: number;
@@ -366,7 +338,6 @@ export function valueOf(
       momentum: round4(momentum),
       slope: Math.round(model.slope * 1000) / 1000,
       level: round4(level ? level.multiple : model.globalLevel),
-      level_samples: level ? level.samples : 0,
       age_days: ageInDays(asOf, p.listed_at),
       value_low_usd: valueLow,
       value_high_usd: valueHigh,
@@ -381,12 +352,8 @@ export function valueOf(
  *  price is a spread to rank by, never a price to promise. */
 export interface Calibration {
   tested: number;
+  inside_count: number;
   range_coverage_pct: number;
-  /** The residual quantiles the printed range uses, as percentages
-   *  (20 and 80 for P20–P80): chosen by pickRangeQuantile so the
-   *  leave-one-out coverage measures ≈50%, and printed on the page. */
-  range_lo_q: number;
-  range_hi_q: number;
   /** Median blind miss, as a factor: the typical re-priced token's
    *  market cap sits within this multiple of the blind price. */
   median_factor_error: number;
@@ -402,7 +369,12 @@ export interface Calibration {
    *  always priced from the past. */
   walkforward_factor_error: number;
   walkforward_coverage_pct: number;
+  walkforward_inside_count: number;
+  walkforward_train: number;
   walkforward_tested: number;
+  /** Full-sample P25 and P75 residual multipliers around the curve. */
+  resid_p25_factor: number;
+  resid_p75_factor: number;
 }
 
 /** A protocol-shaped evaluation point: a traded token and the TVL base
@@ -616,35 +588,64 @@ export function ablationOf(snapshot: Snapshot): AblationRow[] {
   });
 }
 
-/** Leave-one-out calibration of the shipped model: every traded token is
- *  priced as if it had not launched — curve and category levels learned
- *  without it, range from the training fit's own residual spread at the
- *  quantiles `q` names — and the checks are whether the market cap the
- *  market actually set falls inside the printed range, how large the
- *  typical miss is, and how well the blind order tracks the market's own
- *  ranking. */
-export function calibrationOf(snapshot: Snapshot, q = 0.25): Calibration {
-  const tt = evalCompsTokenTotal(snapshot);
+/** Single leave-one-out pass shared by calibrationOf() and radar.live so
+ *  every plotted point and the headline calibration figures come from one
+ *  identical out-of-sample evaluation without fitting twice. */
+function looEvaluate(snapshot: Snapshot): { cal: Calibration; live: LiveRow[] } {
+  const comps = buildComps(snapshot);
+  const bySlug = new Map(snapshot.protocols.map((p) => [p.slug, p]));
+  const chainsBySymbol = new Map<string, string[]>();
+  for (const p of snapshot.protocols) {
+    if (p.symbol === null) continue;
+    const seen = chainsBySymbol.get(p.symbol) ?? [];
+    for (const ch of p.chains) if (!seen.includes(ch)) seen.push(ch);
+    chainsBySymbol.set(p.symbol, seen);
+  }
+  const tt: EvalComp[] = comps.map((c) => ({ proto: bySlug.get(c.slug)!, tvl: c.tvl, mcap: c.mcap }));
+  const fullModel = fitValueModel(asComps(tt));
   let inside = 0;
   const preds: number[] = [];
   const actuals: number[] = [];
+  const live: LiveRow[] = [];
   for (let i = 0; i < tt.length; i++) {
     const rest = tt.filter((_, j) => j !== i);
-    const model = fitValueModel(asComps(rest), q, 1 - q);
+    const model = fitValueModel(asComps(rest));
     const c = tt[i]!;
+    const comp = comps[i]!;
     const pred = curveValue(model, c.tvl, c.proto.category) * momentumOf(c.proto);
+    const low = pred * model.residLowFactor;
+    const high = pred * model.residHighFactor;
+    const inRange = c.mcap >= low && c.mcap <= high;
     preds.push(pred);
     actuals.push(c.mcap);
-    if (c.mcap >= pred * model.residLowFactor && c.mcap <= pred * model.residHighFactor) inside++;
+    if (inRange) inside++;
+    const logErr = Math.log10(c.mcap / pred);
+    const sym = c.proto.symbol ?? '';
+    live.push({
+      slug: c.proto.slug,
+      name: c.proto.name,
+      symbol: sym,
+      category: c.proto.category,
+      chains: chainsBySymbol.get(sym) ?? c.proto.chains,
+      entries: comp.entries,
+      tvl_usd: c.tvl,
+      mcap_usd: c.mcap,
+      multiple: c.tvl > 0 ? round4(c.mcap / c.tvl) : 0,
+      change_7d: c.proto.change_7d,
+      blind_usd: Math.max(1, Math.round(pred)),
+      blind_low_usd: Math.max(1, Math.round(low)),
+      blind_high_usd: Math.max(1, Math.round(high)),
+      miss_factor: Math.round(Math.pow(10, Math.abs(logErr)) * 100) / 100,
+      log_err: Math.round(logErr * 1000) / 1000,
+      in_range: inRange,
+    });
   }
+  live.sort((a, b) => b.mcap_usd - a.mcap_usd || (a.slug < b.slug ? -1 : 1));
   const errs = preds.map((v, i) => Math.abs(Math.log10(v / actuals[i]!))).sort((a, b) => a - b);
   const fit: EvalFit = (t) => {
     const f = fitEvalPower(t, true);
     return (p, tvl) => f(p, tvl) * momentumOf(p);
   };
-  // Walk-forward on the shipped shape: earlier-listed half trains the
-  // curve, later-listed half is priced blind, range from the training
-  // fit's own residual spread.
   const dated = [...tt].sort((a, b) => {
     const da = a.proto.listed_at ?? '';
     const db = b.proto.listed_at ?? '';
@@ -653,7 +654,7 @@ export function calibrationOf(snapshot: Snapshot, q = 0.25): Calibration {
   const half = Math.floor(dated.length / 2);
   const wfTrain = dated.slice(0, half);
   const wfTest = dated.slice(half);
-  const wfModel = fitValueModel(asComps(wfTrain), q, 1 - q);
+  const wfModel = fitValueModel(asComps(wfTrain));
   let wfInside = 0;
   const wfErrs: number[] = [];
   for (const c of wfTest) {
@@ -663,57 +664,27 @@ export function calibrationOf(snapshot: Snapshot, q = 0.25): Calibration {
   }
   wfErrs.sort((a, b) => a - b);
   return {
-    tested: tt.length,
-    range_coverage_pct: tt.length > 0 ? Math.round((100 * inside) / tt.length) : 0,
-    range_lo_q: Math.round(q * 100),
-    range_hi_q: Math.round((1 - q) * 100),
-    median_factor_error: Math.round(Math.pow(10, errs[Math.floor(errs.length / 2)]!) * 100) / 100,
-    spearman: Math.round(spearman(preds, actuals) * 1000) / 1000,
-    kfold_factor_error: kfoldFactor(tt, fit),
-    walkforward_factor_error: Math.round(Math.pow(10, wfErrs[Math.floor(wfErrs.length / 2)]!) * 100) / 100,
-    walkforward_coverage_pct: wfTest.length > 0 ? Math.round((100 * wfInside) / wfTest.length) : 0,
-    walkforward_tested: wfTest.length,
+    cal: {
+      tested: tt.length,
+      inside_count: inside,
+      range_coverage_pct: tt.length > 0 ? Math.round((100 * inside) / tt.length) : 0,
+      median_factor_error: Math.round(Math.pow(10, errs[Math.floor(errs.length / 2)]!) * 100) / 100,
+      spearman: Math.round(spearman(preds, actuals) * 1000) / 1000,
+      kfold_factor_error: kfoldFactor(tt, fit),
+      walkforward_factor_error: Math.round(Math.pow(10, wfErrs[Math.floor(wfErrs.length / 2)]!) * 100) / 100,
+      walkforward_coverage_pct: wfTest.length > 0 ? Math.round((100 * wfInside) / wfTest.length) : 0,
+      walkforward_inside_count: wfInside,
+      walkforward_train: wfTrain.length,
+      walkforward_tested: wfTest.length,
+      resid_p25_factor: round4(fullModel.residLowFactor),
+      resid_p75_factor: round4(fullModel.residHighFactor),
+    },
+    live,
   };
 }
 
-/** The leave-one-out coverage alone, for the range recalibration: the
- *  share of traded tokens whose market cap falls inside the range the
- *  page would have printed for them, at residual quantiles q..1−q. */
-function looCoverage(snapshot: Snapshot, q: number): number {
-  const tt = evalCompsTokenTotal(snapshot);
-  let inside = 0;
-  for (let i = 0; i < tt.length; i++) {
-    const rest = tt.filter((_, j) => j !== i);
-    const model = fitValueModel(asComps(rest), q, 1 - q);
-    const c = tt[i]!;
-    const pred = curveValue(model, c.tvl, c.proto.category) * momentumOf(c.proto);
-    if (c.mcap >= pred * model.residLowFactor && c.mcap <= pred * model.residHighFactor) inside++;
-  }
-  return tt.length > 0 ? Math.round((100 * inside) / tt.length) : 0;
-}
-
-/** Choose the range's residual quantiles so the leave-one-out coverage
- *  measures as close to 50% as the data allows. The quartiles the model
- *  shipped with covered 43% while the page claimed 50% — a visible
- *  shortfall — so the build widens the quantiles in fixed steps and
- *  keeps the first that lands closest to 50% (ties go to the higher
- *  coverage, then to the narrower range). The wider range is the honest
- *  price of the claim: the point model and the ranking do not move. */
-export function pickRangeQuantile(snapshot: Snapshot): number {
-  const candidates = [0.25, 0.22, 0.2, 0.18, 0.16, 0.14, 0.12, 0.1];
-  let bestQ = candidates[0]!;
-  let bestCov = looCoverage(snapshot, bestQ);
-  for (const q of candidates.slice(1)) {
-    const cov = looCoverage(snapshot, q);
-    if (
-      Math.abs(cov - 50) < Math.abs(bestCov - 50) ||
-      (Math.abs(cov - 50) === Math.abs(bestCov - 50) && cov > bestCov)
-    ) {
-      bestQ = q;
-      bestCov = cov;
-    }
-  }
-  return bestQ;
+export function calibrationOf(snapshot: Snapshot): Calibration {
+  return looEvaluate(snapshot).cal;
 }
 
 /** The launch-odds model, as the page states it: a logistic fit over
@@ -725,6 +696,8 @@ export interface OddsModel {
   /** Cross-fitted area under the ROC curve: out-of-sample by construction. */
   auc: number;
   base_rate_pct: number;
+  pos_count: number;
+  neg_count: number;
   /** Standardised weights of the full fit, named for the page. */
   weights: { tvl: number; chains: number; age: number; growth: number };
   /** Cross-fitted Brier score of the full fit: mean squared error of
@@ -852,6 +825,8 @@ export function launchOdds(snapshot: Snapshot): { summary: OddsModel; predict: (
     summary: {
       auc: Math.round((wins / (pos * neg)) * 1000) / 1000,
       base_rate_pct: Math.round(100 * baseRate),
+      pos_count: pos,
+      neg_count: neg,
       weights: { tvl: round2(full.w[0]!), chains: round2(full.w[1]!), age: round2(full.w[2]!), growth: round2(full.w[3]!) },
       brier: round3(brier),
       base_brier: round3(baseBrier),
@@ -992,43 +967,12 @@ function exitAction(p: Protocol, chain: string, gas: { label: string; swap: numb
 
 /** What one protocol's whole farm plan commits, so the page can total it:
  *  working capital across both tranches, the gas the plan's own steps
- *  quote summed over the hold, and the weekly minutes they ask for.
- *  `first_action` is the plan's core move in a few words, for the
- *  board's farm-plan summary column; step 1 is the same fresh-wallet
- *  setup for every row, so the core move (step 2) is the one that
- *  distinguishes a plan. */
+ *  quote summed over the hold, and the weekly minutes they ask for. */
 export interface PlanTotals {
   capital_usd: number;
   gas_usd: number;
   hold_days: number;
   minutes_week: number;
-  first_action: string;
-}
-
-/** The core move of a farm plan in a few words, from the same category
- *  reading coreAction uses — the board column shows this, not step 1's
- *  identical wallet setup. */
-function firstActionLabel(p: Protocol): string {
-  const c = (p.category ?? '').toLowerCase();
-  if (c.includes('risk curator') || c.includes('curator') || c.includes('allocator')) return 'Deposit in vault';
-  if (c.includes('lend') || c.includes('cdp')) return 'Supply collateral';
-  if (c.includes('dex')) return 'Add liquidity';
-  if (c.includes('yield') || c.includes('farm') || c.includes('liquidity')) return 'Deposit in vault';
-  if (c.includes('restak') || c.includes('staking pool') || c === 'staking') return 'Stake base asset';
-  if (c.includes('rwa')) return 'Mint tokenised asset';
-  if (c.includes('stable') || c.includes('algo-stable') || c.includes('dual-token')) return 'Mint stable asset';
-  if (c.includes('basis') || c.includes('cede')) return 'Fund margin';
-  if (c.includes('derivative') || c.includes('perpetual') || c.includes('option')) return 'Open delta-neutral';
-  if (c.includes('prediction')) return 'Fund markets';
-  if (c.includes('insurance')) return 'Buy cover';
-  if (c.includes('payment')) return 'Route payment';
-  if (c.includes('chain')) return 'Bridge & swap';
-  if (c.includes('governance') || c.includes('incentive')) return 'Deposit & vote';
-  if (c.includes('index')) return 'Buy index basket';
-  if (c.includes('launchpad')) return 'Join sale round';
-  if (c.includes('privacy')) return 'Shielded deposit';
-  if (c.includes('collateral') || c.includes('synthetic')) return 'Post collateral';
-  return 'Deposit USDC';
 }
 
 /** Seven concrete farm steps per protocol, each carrying its cost and
@@ -1065,20 +1009,12 @@ export function farmPlan(p: Protocol, asOf: string): { steps: string[]; totals: 
     exit,
   ];
   const gasTotal = Math.round((gas.action * 2 + secondGas + gas.swap * weeks + gas.action) * 10) / 10;
-  return { steps, totals: { capital_usd: capital + extra, gas_usd: gasTotal, hold_days: hold, minutes_week: 15, first_action: firstActionLabel(p) } };
+  return { steps, totals: { capital_usd: capital + extra, gas_usd: gasTotal, hold_days: hold, minutes_week: 15 } };
 }
 
 /** One row of the board this program writes. */
 export interface Row {
   rank: number;
-  /** The bootstrap 90% interval of this row's rank (see
-   *  bootstrapRankIntervals): the ranks the row holds across 200 refits
-   *  of the curve on resampled comps, 5th to 95th percentile. */
-  rank_lo: number;
-  rank_hi: number;
-  /** Indices into the dashboard's comps table of the seven nearest
-   *  already-priced tokens: same category first, then closest in size. */
-  near: number[];
   slug: string;
   name: string;
   category: string | null;
@@ -1100,29 +1036,25 @@ export interface Row {
   plan: PlanTotals;
 }
 
-/** One already-priced token, for the dashboard's comps tables: its total
- *  TVL across every protocol entry that records its symbol, its market
- *  cap, and the fitted curve's price for it — in-sample, so the blind
- *  numbers live in the evidence tables, not here. */
-export interface CompRow {
-  slug: string;
-  name: string;
-  category: string;
-  tvl: number;
-  mcap: number;
-  pred: number;
-}
-
-/** One already-trading protocol, for the dashboard's contrast view. */
+/** One already-trading priced token comp, with its out-of-sample
+ *  leave-one-out blind valuation and P25–P75 range for empirical inspection. */
 export interface LiveRow {
   slug: string;
   name: string;
+  symbol: string;
   category: string | null;
   chains: string[];
+  entries: number;
   tvl_usd: number;
   mcap_usd: number;
   multiple: number;
   change_7d: number | null;
+  blind_usd: number;
+  blind_low_usd: number;
+  blind_high_usd: number;
+  miss_factor: number;
+  log_err: number;
+  in_range: boolean;
 }
 
 /** The method evidence the dashboard publishes: the fitted curve, the
@@ -1164,10 +1096,6 @@ export interface RadarData {
   live_size: number;
   rows: Row[];
   live: LiveRow[];
-  /** Every token the snapshot prices, one entry per token — the comps
-   *  the curve learns from, and the detail view's nearest-neighbour
-   *  table reads them by index. */
-  comps: CompRow[];
   /** The ledger of all 758 protocols, the board's summed values, and the
    *  first 8 hex of the sha256 of board.json as written — a reader can
    *  recompute every figure on this page from the snapshot itself. */
@@ -1177,68 +1105,12 @@ export interface RadarData {
   board_sha8: string;
 }
 
-/** Bootstrap rank intervals: refit the curve on 200 resamples of the
- *  comps (same size, drawn with replacement, fixed seed) and re-rank the
- *  board each time, so every row carries the 5th–95th percentile of the
- *  ranks it holds across refits. The point model is untouched — this is
- *  a statement about how firmly each rank is held, not a new ranking.
- *  Only the curve is refitted: the board ranks by implied value, and
- *  the launch odds never enter a rank. */
-function bootstrapRankIntervals(
-  scored: Array<{ p: Protocol; value: number }>,
-  comps: Comp[],
-  rounds = 200,
-): Map<string, [number, number]> {
-  const ranks = new Map<string, number[]>();
-  for (const s of scored) ranks.set(s.p.slug, []);
-  const rand = mulberry32(0x20261126);
-  for (let b = 0; b < rounds; b++) {
-    const sample: Comp[] = [];
-    for (let i = 0; i < comps.length; i++) sample.push(comps[Math.floor(rand() * comps.length)]!);
-    const m = fitValueModel(sample);
-    const vals = scored.map((s) => ({
-      slug: s.p.slug,
-      v: curveValue(m, s.p.tvl_usd, s.p.category) * momentumOf(s.p),
-      tvl: s.p.tvl_usd,
-    }));
-    vals.sort((a, b) => b.v - a.v || b.tvl - a.tvl || (a.slug < b.slug ? -1 : 1));
-    vals.forEach((x, i) => ranks.get(x.slug)!.push(i + 1));
-  }
-  const out = new Map<string, [number, number]>();
-  for (const [slug, rs] of ranks) {
-    rs.sort((a, b) => a - b);
-    out.set(slug, [quartile(rs, 0.05), quartile(rs, 0.95)]);
-  }
-  return out;
-}
-
-/** The seven nearest already-priced tokens to one board row: same
- *  category first, then closest in size on a log scale, slug order
- *  breaking ties — a pure function of the snapshot, so the table is
- *  real comps, never hand-picked. */
-function nearestCompIndices(p: Protocol, comps: Comp[]): number[] {
-  return comps
-    .map((c, i) => ({
-      i,
-      same: c.category === (p.category ?? 'Uncategorised') ? 0 : 1,
-      d: Math.abs(Math.log10(p.tvl_usd / c.tvl)),
-      slug: c.slug,
-    }))
-    .sort((a, b) => a.same - b.same || a.d - b.d || (a.slug < b.slug ? -1 : 1))
-    .slice(0, 7)
-    .map((x) => x.i);
-}
-
 /** Build the board: every watchlist slug, plus every other protocol that
  *  passes the house rule, ranked by implied value. On this snapshot the
  *  rule admits 198 protocols, so the board is the whole rankable universe. */
 export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData } {
   const comps = buildComps(snapshot);
-  // The range the page prints is recalibrated, not assumed: widen the
-  // residual quantiles until the leave-one-out coverage measures ≈50%.
-  // The point values, the levels and the ranking do not move.
-  const rangeQ = pickRangeQuantile(snapshot);
-  const model = fitValueModel(comps, rangeQ, 1 - rangeQ);
+  const model = fitValueModel(comps);
   const odds = launchOdds(snapshot);
   const chosen = new Map<string, Protocol>();
   for (const p of snapshot.protocols) if (rankable(p)) chosen.set(p.slug, p);
@@ -1252,16 +1124,11 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
   const watchlist = new Set(snapshot.watchlist);
   const scored = [...chosen.values()].map((p) => ({ p, ...valueOf(p, snapshot.as_of, model) }));
   scored.sort((a, b) => b.value - a.value || b.p.tvl_usd - a.p.tvl_usd || (a.p.slug < b.p.slug ? -1 : 1));
-  const intervals = bootstrapRankIntervals(scored, comps);
   const board: Row[] = scored.map(({ p, value, workings }, i) => {
     const plan = farmPlan(p, snapshot.as_of);
     const launchOdds = Math.round(odds.predict(p) * 1000) / 1000;
-    const iv = intervals.get(p.slug)!;
     return {
       rank: i + 1,
-      rank_lo: iv[0],
-      rank_hi: iv[1],
-      near: nearestCompIndices(p, comps),
       slug: p.slug,
       name: p.name,
       category: p.category,
@@ -1280,38 +1147,7 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
       plan: plan.totals,
     };
   });
-  // The comps the curve learns from, priced once each at their token
-  // total TVL, for the detail view's nearest-neighbour table.
-  const compRows: CompRow[] = comps.map((c) => {
-    const carrier = bySlug.get(c.slug)!;
-    return {
-      slug: c.slug,
-      name: carrier.name,
-      category: c.category,
-      tvl: c.tvl,
-      mcap: c.mcap,
-      pred: Math.max(1, Math.round(curveValue(model, c.tvl, c.category) * momentumOf(carrier))),
-    };
-  });
-  // The contrast view is every token the snapshot prices — the whole
-  // evidence the curve is learned from, not just the top 24 by market
-  // cap. TVL is each token's total across its protocol entries, the
-  // same base the curve prices against.
-  const live: LiveRow[] = compRows
-    .map((c) => {
-      const p = bySlug.get(c.slug)!;
-      return {
-        slug: c.slug,
-        name: c.name,
-        category: c.category,
-        chains: p.chains,
-        tvl_usd: c.tvl,
-        mcap_usd: c.mcap,
-        multiple: round4(c.mcap / c.tvl),
-        change_7d: p.change_7d,
-      };
-    })
-    .sort((a, b) => b.mcap_usd - a.mcap_usd || (a.slug < b.slug ? -1 : 1));
+  const { cal: calibration, live } = looEvaluate(snapshot);
   const multiples = [...model.byCategory.values()].sort((a, b) => b.samples - a.samples || (a.category < b.category ? -1 : 1));
   const funnel = funnelOf(snapshot);
   const radar: RadarData = {
@@ -1320,7 +1156,7 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
     floor_usd: snapshot.floor_usd,
     model_version: MODEL_VERSION,
     global_multiple: round4(model.globalLevel),
-    calibration: calibrationOf(snapshot, rangeQ),
+    calibration,
     funnel,
     multiples,
     method: {
@@ -1335,7 +1171,6 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
     live_size: live.length,
     rows: board,
     live,
-    comps: compRows,
     ledger: {
       ranked: board.length,
       priced: model.comps,
