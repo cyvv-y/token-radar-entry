@@ -22,10 +22,12 @@
       <select id="cat" aria-label="Category"></select>
       <select id="sort" aria-label="Sort">
         <option value="implied">Sort: implied value</option>
+        <option value="expected">Sort: expected value (× launch odds)</option>
+        <option value="odds">Sort: launch odds</option>
         <option value="tvl">Sort: TVL</option>
         <option value="growth">Sort: 7-day growth</option>
         <option value="age">Sort: time tokenless</option>
-        <option value="multiple">Sort: category multiple</option>
+        <option value="multiple">Sort: effective multiple</option>
       </select>
       <label class="chk"><input id="wl" type="checkbox"> Watchlist only</label>
       <button id="tab-live" type="button">Already trading</button>
@@ -35,7 +37,7 @@
       <table id="board">
         <thead><tr>
           <th class="num">#</th><th>Protocol</th><th>Category</th><th>Chains</th>
-          <th class="num">TVL</th><th class="num">7d</th><th class="num">Multiple</th><th class="num">Implied value</th>
+          <th class="num">TVL</th><th class="num">7d</th><th class="num">Multiple</th><th class="num">Implied value</th><th class="num">Launch odds</th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
@@ -53,7 +55,8 @@
   <footer>
     <p>Implied value is this entry's own claim, computed only from the snapshot's figures — it is not a
     prediction that a token will be issued. Each protocol's detail view also prints the plausible range
-    its category's traded spread implies; the point figure ranks, the range is the honest part.
+    the fitted curve's residual spread implies, and its launch odds from a separate logistic model;
+    the point figure ranks, the range and the odds are the honest parts.
     “Records no token” means the snapshot carries no CoinGecko id
     and no symbol for the protocol. Farm plans are checklists, not financial advice.</p>
   </footer>

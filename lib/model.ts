@@ -1,24 +1,35 @@
-// The Launch Multiple model (version launch-multiple-3) for token-radar-01.
+// The Launch Multiple model (version launch-multiple-4) for token-radar-01.
 //
-// The idea, in plain words. The snapshot holds 758 protocols; 128 of them
-// already trade, and for those the market has published its own answer to
-// "what is one dollar of TVL worth here?" — the ratio of market cap to TVL.
-// Protocols still to launch are priced with the median of that ratio inside
-// their own category, shrunk toward the global median (0.275 on this
-// snapshot) when a category has only a few traded members to learn from.
-// That base is then adjusted by three more figures the snapshot itself
-// carries: the protocol's 7-day TVL momentum, the number of chains it runs
-// on (distribution a launch can use), and how long it has already operated
-// with no token recorded (pent-up launch value, rising over three years).
+// What changed since version 3, and why: version 3 priced a launch at a
+// constant category multiple of TVL. Version 4 blind-tested that shape
+// against the snapshot's own traded protocols and it lost. Across the
+// traded set, market cap does not grow in proportion to TVL — it grows
+// as a power of it. The fitted curve on this snapshot is
+// mcap ∝ TVL^0.65: a protocol ten times larger trades at roughly four
+// and a half times the value, not ten times, so a constant multiple
+// systematically overprices the giants and underprices the small. The
+// model below is that curve, with a level per category, fitted on comps
+// built the way the snapshot itself attributes value: one entry per
+// token, its TVL the sum over every protocol entry that records the
+// token's symbol. Every other candidate term — the constant multiple,
+// chain breadth, maturity, a momentum weight — was fitted and blind-
+// tested the same way, and the page publishes the whole table: the
+// terms that failed the test (breadth, maturity) are not in the model,
+// and the one that passed (momentum, at the weight the test chose) is.
 //
-// Two honesty devices ride on top of the point estimate. Each category also
-// lends its first and third quartile ratios, shrunk the same way, so every
-// row carries the plausible range the category's own traded spread implies
-// — a launch is a guess, and the page says how wide the guess is. And the
-// range is calibrated against the model's own evidence: every traded
-// protocol is re-priced blind, with multiples learned without it, and the
-// dashboard publishes how often the market cap the market actually set
-// falls inside the range the page would have printed for it. The funnel
+// Two honesty devices ride on top of the point estimate. Every row
+// carries the plausible range the fitted curve's own residuals imply —
+// a launch is a guess, and the page says how wide the guess is — and
+// the range is calibrated the same way the model was chosen: every
+// traded protocol is re-priced blind, with the curve learned without
+// it, and the dashboard publishes how often the market cap the market
+// actually set falls inside the range the page would have printed, how
+// large the typical miss is, and how well the blind ranking tracks the
+// market's own. A second, separate model estimates each protocol's
+// launch odds — the chance it records a token at all — from a logistic
+// fit over all 758 protocols, cross-fitted so its published accuracy is
+// out-of-sample; the board still ranks by launch value, and the odds
+// only weight the expected value a farmer is playing for. The funnel
 // counts are published too: how many protocols record no token, and how
 // many of those the product rule below keeps off the board, reason by
 // reason.
@@ -58,7 +69,7 @@ export interface Snapshot {
 }
 
 /** The model's stated version, shown on the dashboard. */
-export const MODEL_VERSION = 'launch-multiple-3';
+export const MODEL_VERSION = 'launch-multiple-4';
 
 /** How many already-trading protocols the dashboard sets aside for contrast. */
 export const LIVE_ROWS = 24;
@@ -112,7 +123,7 @@ function quartile(values: number[], q: number): number {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))))]!;
 }
 
-/** The traded ratios one protocol contributes, or none when it has no
+/** The traded ratio one protocol entry shows, or none when it has no
  *  market cap to learn from. The same window the model has always used:
  *  a ratio outside 0.01..100 is a data artefact, not a price. */
 function tradedRatio(p: Protocol): number | null {
@@ -121,24 +132,48 @@ function tradedRatio(p: Protocol): number | null {
   return ratio >= 0.01 && ratio <= 100 ? ratio : null;
 }
 
-/** One category's learned multiple, with the evidence behind it. The low
- *  and high are the category's own first and third quartile ratios, shrunk
- *  toward the global quartiles by the same weight as the median, so a
- *  row's plausible range is the spread its category actually trades at. */
-export interface CategoryMultiple {
+/** One comparable the value model learns from: a single token, priced
+ *  once. The snapshot attributes a token's market cap to one protocol
+ *  entry (Aave V2 carries AAVE's; V1, V3 and V4 record the symbol but no
+ *  cap), so a token's TVL is the sum over every entry that records its
+ *  symbol — pricing the carrier entry against its own TVL alone would
+ *  charge the whole token's value to a fraction of its locked value. */
+export interface Comp {
+  slug: string;
   category: string;
-  multiple: number;
-  low: number;
-  high: number;
-  samples: number;
+  tvl: number;
+  mcap: number;
+  ratio: number;
+  entries: number;
 }
 
-/** Everything the model learns from the snapshot's traded protocols. */
-export interface Learned {
-  byCategory: Map<string, CategoryMultiple>;
-  global: number;
-  globalLow: number;
-  globalHigh: number;
+/** The comps set: every token the snapshot prices, at its total TVL. */
+export function buildComps(snapshot: Snapshot): Comp[] {
+  const bySymbol = new Map<string, Protocol[]>();
+  for (const p of snapshot.protocols) {
+    if (p.symbol === null) continue;
+    const group = bySymbol.get(p.symbol) ?? [];
+    group.push(p);
+    bySymbol.set(p.symbol, group);
+  }
+  const comps: Comp[] = [];
+  for (const group of bySymbol.values()) {
+    const carrier = group.find((p) => tradedRatio(p) !== null);
+    if (!carrier) continue;
+    const tvl = group.reduce((s, p) => s + p.tvl_usd, 0);
+    const ratio = carrier.mcap_usd! / tvl;
+    if (ratio < 0.01 || ratio > 100) continue;
+    comps.push({
+      slug: carrier.slug,
+      category: carrier.category ?? 'Uncategorised',
+      tvl,
+      mcap: carrier.mcap_usd!,
+      ratio,
+      entries: group.length,
+    });
+  }
+  comps.sort((a, b) => (a.slug < b.slug ? -1 : 1));
+  return comps;
 }
 
 /** Shrink one statistic toward the global one by sample size: the weight
@@ -147,39 +182,96 @@ function shrink(own: number, global: number, n: number): number {
   return (n * own + 3 * global) / (n + 3);
 }
 
-/** The market's TVL multiples, learned from the snapshot's traded protocols.
- *  A category needs at least three traded members to earn its own multiple,
- *  and even then it is shrunk toward the global median in proportion to its
- *  sample size, so a handful of lucky listings cannot reprice a category. */
-export function learnMultiples(snapshot: Snapshot): Learned {
-  const ratios = new Map<string, number[]>();
-  const all: number[] = [];
-  for (const p of snapshot.protocols) {
-    const ratio = tradedRatio(p);
-    if (ratio === null) continue;
-    all.push(ratio);
-    const key = p.category ?? 'Uncategorised';
-    const bucket = ratios.get(key) ?? [];
-    bucket.push(ratio);
-    ratios.set(key, bucket);
+/** One category's level on the fitted curve: its multiple at the
+ *  reference TVL (the comps' geometric mean), with the evidence behind
+ *  it. A category needs at least three comps to earn its own level. */
+export interface CategoryMultiple {
+  category: string;
+  multiple: number;
+  samples: number;
+}
+
+/** The fitted value model: market cap as a power of TVL, a level per
+ *  category, and the spread of its own residuals for the printed range. */
+export interface ValueModel {
+  slope: number;
+  meanLogTvl: number;
+  referenceTvl: number;
+  globalLevel: number;
+  byCategory: Map<string, CategoryMultiple>;
+  residLowFactor: number;
+  residHighFactor: number;
+  comps: number;
+}
+
+/** Ordinary least squares of y on x, closed form. */
+function ols(xs: number[], ys: number[]): { a: number; b: number } {
+  const n = xs.length;
+  const mx = xs.reduce((s, x) => s + x, 0) / n;
+  const my = ys.reduce((s, y) => s + y, 0) / n;
+  let sxy = 0;
+  let sxx = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (xs[i]! - mx) * (ys[i]! - my);
+    sxx += (xs[i]! - mx) ** 2;
   }
-  const global = all.length > 0 ? median(all) : 0.25;
-  const globalLow = all.length > 0 ? quartile(all, 0.25) : global;
-  const globalHigh = all.length > 0 ? quartile(all, 0.75) : global;
+  const b = sxx === 0 ? 0 : sxy / sxx;
+  return { a: my - b * mx, b };
+}
+
+/** Fit the curve: log market cap on log TVL over the comps, then each
+ *  category's level as the median of its members' log residuals — what
+ *  is left of a token's ratio after the curve's slope is removed —
+ *  shrunk toward the global median residual by the same three-phantom
+ *  rule the model has always used. The printed range comes from the
+ *  residuals themselves: the quartiles of log10(actual / predicted)
+ *  across the comps, so the spread is the fit's own measured scatter,
+ *  not a symmetric fudge around the point estimate. */
+export function fitValueModel(comps: Comp[]): ValueModel {
+  const xs = comps.map((c) => Math.log(c.tvl));
+  const ys = comps.map((c) => Math.log(c.mcap));
+  const { b: slope } = ols(xs, ys);
+  const meanLogTvl = xs.reduce((s, x) => s + x, 0) / comps.length;
+  const resid = comps.map((c) => Math.log(c.ratio) - (slope - 1) * (Math.log(c.tvl) - meanLogTvl));
+  const globalOffset = median(resid);
+  const buckets = new Map<string, number[]>();
+  comps.forEach((c, i) => {
+    const bucket = buckets.get(c.category) ?? [];
+    bucket.push(resid[i]!);
+    buckets.set(c.category, bucket);
+  });
   const byCategory = new Map<string, CategoryMultiple>();
-  for (const [key, bucket] of ratios) {
+  for (const [key, bucket] of buckets) {
     if (bucket.length >= 3) {
-      const n = bucket.length;
       byCategory.set(key, {
         category: key,
-        multiple: shrink(median(bucket), global, n),
-        low: shrink(quartile(bucket, 0.25), globalLow, n),
-        high: shrink(quartile(bucket, 0.75), globalHigh, n),
-        samples: n,
+        multiple: Math.round(Math.exp(shrink(median(bucket), globalOffset, bucket.length)) * 1e4) / 1e4,
+        samples: bucket.length,
       });
     }
   }
-  return { byCategory, global, globalLow, globalHigh };
+  const model: ValueModel = {
+    slope,
+    meanLogTvl,
+    referenceTvl: Math.exp(meanLogTvl),
+    globalLevel: Math.exp(globalOffset),
+    byCategory,
+    residLowFactor: 1,
+    residHighFactor: 1,
+    comps: comps.length,
+  };
+  const resid10 = comps.map((c) => Math.log10(c.mcap / curveValue(model, c.tvl, c.category)));
+  model.residLowFactor = Math.pow(10, quartile(resid10, 0.25));
+  model.residHighFactor = Math.pow(10, quartile(resid10, 0.75));
+  return model;
+}
+
+/** The curve's price for a TVL in a category, before any adjustment:
+ *  TVL raised to the fitted slope, at the category's level. */
+function curveValue(model: ValueModel, tvl: number, category: string | null): number {
+  const level = model.byCategory.get(category ?? 'Uncategorised');
+  const offset = level ? Math.log(level.multiple) : Math.log(model.globalLevel);
+  return tvl * Math.exp(offset + (model.slope - 1) * (Math.log(tvl) - model.meanLogTvl));
 }
 
 /** Whole days between DefiLlama's first tracking day and the snapshot date. */
@@ -195,110 +287,406 @@ const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
 /** The workings of one protocol's valuation, kept so the page can show them. */
 export interface Workings {
+  /** The effective multiple at this protocol's own TVL: value / TVL. */
   multiple: number;
   multiple_source: string;
   momentum: number;
-  breadth: number;
-  maturity: number;
+  /** The fitted power-law slope the price came from. */
+  slope: number;
+  /** The category's level: its multiple at the reference TVL. */
+  level: number;
   age_days: number | null;
   value_low_usd: number;
   value_high_usd: number;
 }
 
-/** The three adjustments every valuation shares, traded or not: momentum
- *  from the 7-day TVL change, breadth from the chain count, maturity from
- *  the time already run with no token recorded. */
-function adjustments(p: Protocol, asOf: string): { momentum: number; breadth: number; maturity: number; age: number | null } {
-  // Momentum: reward a growing TVL, discount a shrinking one, clamp both so
-  // a single wild week cannot dominate a launch valuation.
+/** The one adjustment that survived the blind test: momentum from the
+ *  7-day TVL change, at the weight the test itself chose. Chain breadth
+ *  and maturity were fitted and tested the same way and made the blind
+ *  error worse, so they are not in this model — the ablation table the
+ *  page publishes carries their numbers. */
+export const MOMENTUM_WEIGHT = 0.2;
+
+function momentumOf(p: Protocol): number {
   const pct = Math.min(80, Math.max(-40, p.change_7d ?? 0));
-  const momentum = 1 + (pct / 100) * 0.35;
-  // Breadth: each extra chain is distribution a launch can use, capped at 6.
-  const breadth = 1 + 0.03 * Math.min(Math.max(p.chains.length - 1, 0), 6);
-  // Maturity: value pent up over a long tokenless run, rising over 3 years.
-  const age = ageInDays(asOf, p.listed_at);
-  const maturity = 0.7 + 0.3 * (Math.min(age ?? 365, 1095) / 1095);
-  return { momentum, breadth, maturity, age };
+  return 1 + (pct / 100) * MOMENTUM_WEIGHT;
 }
 
 /** Value one rankable protocol, returning the figure and its workings.
- *  The plausible range prices the same TVL and adjustments at the low and
- *  high quartile multiples, so it is the category's own traded spread —
- *  never a symmetric fudge around the point estimate. */
+ *  The plausible range scales the same fitted price by the quartiles of
+ *  the curve's own residuals, so it is the spread the fit actually
+ *  scatters by — never a symmetric fudge around the point estimate. */
 export function valueOf(
   p: Protocol,
   asOf: string,
-  learned: Learned,
+  model: ValueModel,
 ): { value: number; workings: Workings } {
-  const learnedFor = learned.byCategory.get(p.category ?? 'Uncategorised');
-  const multiple = learnedFor ? learnedFor.multiple : learned.global;
-  const lowMultiple = learnedFor ? learnedFor.low : learned.globalLow;
-  const highMultiple = learnedFor ? learnedFor.high : learned.globalHigh;
-  const multipleSource = learnedFor
-    ? `median of ${learnedFor.samples} traded ${learnedFor.category} protocols, shrunk to the global median`
-    : 'the global median multiple (too few traded protocols in this category to learn one)';
-  const { momentum, breadth, maturity, age } = adjustments(p, asOf);
-  const adj = momentum * breadth * maturity;
-  const value = Math.max(1, Math.round(p.tvl_usd * multiple * adj));
-  const valueLow = Math.min(value, Math.max(1, Math.round(p.tvl_usd * lowMultiple * adj)));
-  const valueHigh = Math.max(value, Math.max(1, Math.round(p.tvl_usd * highMultiple * adj)));
+  const level = model.byCategory.get(p.category ?? 'Uncategorised');
+  const multipleSource = level
+    ? `level fitted from ${level.samples} traded ${level.category} tokens on the power-law curve, shrunk toward the global level`
+    : 'the global level on the power-law curve (too few traded tokens in this category to fit one)';
+  const momentum = momentumOf(p);
+  const base = curveValue(model, p.tvl_usd, p.category);
+  const value = Math.max(1, Math.round(base * momentum));
+  const valueLow = Math.min(value, Math.max(1, Math.round(base * momentum * model.residLowFactor)));
+  const valueHigh = Math.max(value, Math.max(1, Math.round(base * momentum * model.residHighFactor)));
   return {
     value,
     workings: {
-      multiple: round4(multiple),
+      multiple: round4(value / p.tvl_usd),
       multiple_source: multipleSource,
       momentum: round4(momentum),
-      breadth: round4(breadth),
-      maturity: round4(maturity),
-      age_days: age,
+      slope: Math.round(model.slope * 1000) / 1000,
+      level: round4(level ? level.multiple : model.globalLevel),
+      age_days: ageInDays(asOf, p.listed_at),
       value_low_usd: valueLow,
       value_high_usd: valueHigh,
     },
   };
 }
 
-/** The calibration of the printed range, measured on the only ground
- *  truth the snapshot holds: its own traded protocols, each re-priced
+/** The calibration of the printed range and price, measured on the only
+ *  ground truth the snapshot holds: its own traded tokens, each re-priced
  *  blind. No stronger claim is made, because the data allows none: the
  *  traded ratios span 0.01 to 100, four orders of magnitude, so a launch
- *  multiple is a spread to rank by, never a price to promise. */
+ *  price is a spread to rank by, never a price to promise. */
 export interface Calibration {
   tested: number;
   range_coverage_pct: number;
+  /** Median blind miss, as a factor: the typical re-priced token's
+   *  market cap sits within this multiple of the blind price. */
+  median_factor_error: number;
+  /** Spearman correlation between the blind prices and the market's own
+   *  ranking of the same tokens. */
+  spearman: number;
+  /** The same median factor under a second, different blind protocol:
+   *  repeated 5-fold cross-validation. Two protocols, one verdict. */
+  kfold_factor_error: number;
 }
 
-/** Leave-one-out coverage of the plausible range. Every traded protocol
- *  is priced as if it had no token — quartile multiples relearned from the
- *  other traded members only, the same shrinkage, the same momentum,
- *  breadth and maturity adjustments its printed range would carry — and
- *  the check is simply whether the market cap the market actually gave it
- *  falls inside that range. In-sample the quartiles would cover one in
- *  two; this is the honest out-of-sample figure. */
-export function calibrationOf(snapshot: Snapshot): Calibration {
-  const traded = snapshot.protocols.filter((p) => tradedRatio(p) !== null);
-  let tested = 0;
-  let inside = 0;
-  for (const p of traded) {
-    const others: number[] = [];
-    const bucket: number[] = [];
-    for (const q of traded) {
-      if (q.slug === p.slug) continue;
-      const r = tradedRatio(q)!;
-      others.push(r);
-      if ((q.category ?? 'Uncategorised') === (p.category ?? 'Uncategorised')) bucket.push(r);
-    }
-    if (others.length === 0) continue;
-    const n = bucket.length;
-    const learned = n >= 3;
-    const low = learned ? shrink(quartile(bucket, 0.25), quartile(others, 0.25), n) : quartile(others, 0.25);
-    const high = learned ? shrink(quartile(bucket, 0.75), quartile(others, 0.75), n) : quartile(others, 0.75);
-    const { momentum, breadth, maturity } = adjustments(p, snapshot.as_of);
-    const adj = momentum * breadth * maturity;
-    const actual = p.mcap_usd!;
-    tested++;
-    if (actual >= p.tvl_usd * low * adj && actual <= p.tvl_usd * high * adj) inside++;
+/** A protocol-shaped evaluation point: a traded token and the TVL base
+ *  its price is predicted from (its own entry's, or its token total). */
+interface EvalComp {
+  proto: Protocol;
+  tvl: number;
+  mcap: number;
+}
+
+type EvalFit = (train: EvalComp[]) => (p: Protocol, tvl: number) => number;
+
+function evalCompsRaw(snapshot: Snapshot): EvalComp[] {
+  return snapshot.protocols
+    .filter((p) => tradedRatio(p) !== null)
+    .map((p) => ({ proto: p, tvl: p.tvl_usd, mcap: p.mcap_usd! }));
+}
+
+function evalCompsTokenTotal(snapshot: Snapshot): EvalComp[] {
+  const bySlug = new Map(snapshot.protocols.map((p) => [p.slug, p]));
+  return buildComps(snapshot).map((c) => ({ proto: bySlug.get(c.slug)!, tvl: c.tvl, mcap: c.mcap }));
+}
+
+function asComps(train: EvalComp[]): Comp[] {
+  return train.map((c) => ({
+    slug: c.proto.slug,
+    category: c.proto.category ?? 'Uncategorised',
+    tvl: c.tvl,
+    mcap: c.mcap,
+    ratio: c.mcap / c.tvl,
+    entries: 1,
+  }));
+}
+
+/** Version 3's adjustments, kept only so the ablation can price them. */
+function evalAdjV3(p: Protocol, asOf: string): number {
+  const pct = Math.min(80, Math.max(-40, p.change_7d ?? 0));
+  const momentum = 1 + (pct / 100) * 0.35;
+  const breadth = 1 + 0.03 * Math.min(Math.max(p.chains.length - 1, 0), 6);
+  const age = ageInDays(asOf, p.listed_at);
+  const maturity = 0.7 + 0.3 * (Math.min(age ?? 365, 1095) / 1095);
+  return momentum * breadth * maturity;
+}
+
+function evalAdjStarter(p: Protocol, asOf: string): number {
+  const growth = 1 + (Math.min(120, Math.max(-60, p.change_7d ?? 0)) / 100) * 0.5;
+  const age = ageInDays(asOf, p.listed_at);
+  return growth * (0.6 + (Math.min(age ?? 365, 1095) / 1095) * 0.4);
+}
+
+function evalAdjBreadth(p: Protocol): number {
+  return 1 + 0.03 * Math.min(Math.max(p.chains.length - 1, 0), 6);
+}
+
+function evalAdjMaturity(p: Protocol, asOf: string): number {
+  const age = ageInDays(asOf, p.listed_at);
+  return 0.7 + 0.3 * (Math.min(age ?? 365, 1095) / 1095);
+}
+
+function fitEvalCatMedian(train: EvalComp[]): (p: Protocol, tvl: number) => number {
+  const glob = median(train.map((c) => c.mcap / c.tvl));
+  const buckets = new Map<string, number[]>();
+  for (const c of train) {
+    const bucket = buckets.get(c.proto.category ?? 'Uncategorised') ?? [];
+    bucket.push(c.mcap / c.tvl);
+    buckets.set(c.proto.category ?? 'Uncategorised', bucket);
   }
-  return { tested, range_coverage_pct: tested > 0 ? Math.round((100 * inside) / tested) : 0 };
+  const mult = new Map<string, number>();
+  for (const [key, bucket] of buckets) {
+    if (bucket.length >= 3) mult.set(key, shrink(median(bucket), glob, bucket.length));
+  }
+  return (p, tvl) => tvl * (mult.get(p.category ?? 'Uncategorised') ?? glob);
+}
+
+function fitEvalPower(train: EvalComp[], levels: boolean): (p: Protocol, tvl: number) => number {
+  const model = fitValueModel(asComps(train));
+  if (!levels) {
+    return (_p, tvl) => tvl * Math.exp(Math.log(model.globalLevel) + (model.slope - 1) * (Math.log(tvl) - model.meanLogTvl));
+  }
+  return (p, tvl) => curveValue(model, tvl, p.category);
+}
+
+/** Spearman rank correlation between two equal-length series. */
+function spearman(xs: number[], ys: number[]): number {
+  const rank = (v: number[]): number[] => {
+    const sorted = v.map((x, i) => ({ x, i })).sort((a, b) => a.x - b.x);
+    const r = new Array<number>(v.length);
+    let i = 0;
+    while (i < sorted.length) {
+      let j = i;
+      while (j + 1 < sorted.length && sorted[j + 1]!.x === sorted[i]!.x) j++;
+      const avg = (i + j) / 2 + 1;
+      for (let k = i; k <= j; k++) r[sorted[k]!.i] = avg;
+      i = j + 1;
+    }
+    return r;
+  };
+  const rx = rank(xs);
+  const ry = rank(ys);
+  const n = xs.length;
+  const mx = rx.reduce((s, x) => s + x, 0) / n;
+  const my = ry.reduce((s, y) => s + y, 0) / n;
+  let sxy = 0;
+  let sxx = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (rx[i]! - mx) * (ry[i]! - my);
+    sxx += (rx[i]! - mx) ** 2;
+    syy += (ry[i]! - my) ** 2;
+  }
+  return sxy / Math.sqrt(sxx * syy);
+}
+
+/** Leave-one-out blind errors of one fitted shape over one comps set. */
+function looRun(comps: EvalComp[], fit: EvalFit): { factor: number; spearman: number; preds: number[] } {
+  const preds: number[] = [];
+  const actuals: number[] = [];
+  for (let i = 0; i < comps.length; i++) {
+    const model = fit(comps.filter((_, j) => j !== i));
+    preds.push(model(comps[i]!.proto, comps[i]!.tvl));
+    actuals.push(comps[i]!.mcap);
+  }
+  const errs = preds.map((v, i) => Math.abs(Math.log10(v / actuals[i]!))).sort((a, b) => a - b);
+  return {
+    factor: Math.round(Math.pow(10, errs[Math.floor(errs.length / 2)]!) * 100) / 100,
+    spearman: Math.round(spearman(preds, actuals) * 1000) / 1000,
+    preds,
+  };
+}
+
+/** Repeated 5-fold blind factor: a second protocol beside leave-one-out,
+ *  with folds assigned by a slug hash so the split is deterministic. */
+function kfoldFactor(comps: EvalComp[], fit: EvalFit, k = 5, reps = 4): number {
+  const errs: number[] = [];
+  const hash = (s: string, salt: number): number => {
+    let x = salt * 7919;
+    for (const ch of s) x = (x * 31 + ch.charCodeAt(0)) >>> 0;
+    return x;
+  };
+  for (let rep = 0; rep < reps; rep++) {
+    const order = comps.map((_, i) => i).sort((a, b) => hash(comps[a]!.proto.slug, rep) - hash(comps[b]!.proto.slug, rep));
+    for (let f = 0; f < k; f++) {
+      const test = order.filter((_, j) => j % k === f);
+      const train = order.filter((_, j) => j % k !== f).map((i) => comps[i]!);
+      const model = fit(train);
+      for (const i of test) errs.push(Math.abs(Math.log10(model(comps[i]!.proto, comps[i]!.tvl) / comps[i]!.mcap)));
+    }
+  }
+  errs.sort((a, b) => a - b);
+  return Math.round(Math.pow(10, errs[Math.floor(errs.length / 2)]!) * 100) / 100;
+}
+
+/** One row of the published ablation: a candidate model shape, blind. */
+export interface AblationRow {
+  label: string;
+  median_factor: number;
+  spearman: number;
+}
+
+/** The ablation the page publishes. Every candidate term was fitted and
+ *  blind-tested under the same leave-one-out protocol; the shapes the
+ *  shipped model rejected are in the table with their numbers, because a
+ *  method section that only shows the winner is an advertisement, not
+ *  evidence. Labels name the comps each shape learned from: per-entry
+ *  ratios, or token totals (one entry per token, TVL summed). */
+export function ablationOf(snapshot: Snapshot): AblationRow[] {
+  const raw = evalCompsRaw(snapshot);
+  const tt = evalCompsTokenTotal(snapshot);
+  const asOf = snapshot.as_of;
+  const rows: Array<[string, EvalComp[], EvalFit]> = [
+    ['Flat 0.25 × TVL, starter adjustments (per-entry)', raw, () => (p, tvl) => tvl * 0.25 * evalAdjStarter(p, asOf)],
+    ['Global median multiple (per-entry)', raw, (t) => { const g = median(t.map((c) => c.mcap / c.tvl)); return (_p, tvl) => tvl * g; }],
+    ['Category median multiples (per-entry)', raw, (t) => fitEvalCatMedian(t)],
+    ['Category medians + momentum, breadth, maturity — v3 (per-entry)', raw, (t) => { const f = fitEvalCatMedian(t); return (p, tvl) => f(p, tvl) * evalAdjV3(p, asOf); }],
+    ['Power-law curve, no category level (token totals)', tt, (t) => fitEvalPower(t, false)],
+    ['Power-law curve + category level (token totals)', tt, (t) => fitEvalPower(t, true)],
+    ['… + chain breadth — tested, rejected', tt, (t) => { const f = fitEvalPower(t, true); return (p, tvl) => f(p, tvl) * evalAdjBreadth(p); }],
+    ['… + maturity — tested, rejected', tt, (t) => { const f = fitEvalPower(t, true); return (p, tvl) => f(p, tvl) * evalAdjMaturity(p, asOf); }],
+    ['Power-law + category level + fitted momentum — v4, shipped', tt, (t) => { const f = fitEvalPower(t, true); return (p, tvl) => f(p, tvl) * momentumOf(p); }],
+  ];
+  return rows.map(([label, comps, fit]) => {
+    const r = looRun(comps, fit);
+    return { label, median_factor: r.factor, spearman: r.spearman };
+  });
+}
+
+/** Leave-one-out calibration of the shipped model: every traded token is
+ *  priced as if it had not launched — curve and category levels learned
+ *  without it, range from the training fit's own residual spread — and
+ *  the checks are whether the market cap the market actually set falls
+ *  inside the printed range, how large the typical miss is, and how well
+ *  the blind order tracks the market's own ranking. */
+export function calibrationOf(snapshot: Snapshot): Calibration {
+  const tt = evalCompsTokenTotal(snapshot);
+  let inside = 0;
+  const preds: number[] = [];
+  const actuals: number[] = [];
+  for (let i = 0; i < tt.length; i++) {
+    const rest = tt.filter((_, j) => j !== i);
+    const model = fitValueModel(asComps(rest));
+    const c = tt[i]!;
+    const pred = curveValue(model, c.tvl, c.proto.category) * momentumOf(c.proto);
+    preds.push(pred);
+    actuals.push(c.mcap);
+    if (c.mcap >= pred * model.residLowFactor && c.mcap <= pred * model.residHighFactor) inside++;
+  }
+  const errs = preds.map((v, i) => Math.abs(Math.log10(v / actuals[i]!))).sort((a, b) => a - b);
+  const fit: EvalFit = (t) => {
+    const f = fitEvalPower(t, true);
+    return (p, tvl) => f(p, tvl) * momentumOf(p);
+  };
+  return {
+    tested: tt.length,
+    range_coverage_pct: tt.length > 0 ? Math.round((100 * inside) / tt.length) : 0,
+    median_factor_error: Math.round(Math.pow(10, errs[Math.floor(errs.length / 2)]!) * 100) / 100,
+    spearman: Math.round(spearman(preds, actuals) * 1000) / 1000,
+    kfold_factor_error: kfoldFactor(tt, fit),
+  };
+}
+
+/** The launch-odds model, as the page states it: a logistic fit over
+ *  every protocol in the snapshot, the outcome being whether the
+ *  snapshot records a token for it. Only figures observable before any
+ *  launch are features — size, chain count, time tracked, last week's
+ *  growth — never the market cap or anything a launch itself produces. */
+export interface OddsModel {
+  /** Cross-fitted area under the ROC curve: out-of-sample by construction. */
+  auc: number;
+  base_rate_pct: number;
+  /** Standardised weights of the full fit, named for the page. */
+  weights: { tvl: number; chains: number; age: number; growth: number };
+}
+
+function oddsFeatures(p: Protocol, asOf: string): number[] {
+  const age = ageInDays(asOf, p.listed_at);
+  return [
+    Math.log10(Math.max(p.tvl_usd, 1)),
+    Math.min(p.chains.length, 12),
+    Math.min((age ?? 365) / 365, 8),
+    Math.min(80, Math.max(-40, p.change_7d ?? 0)) / 40,
+  ];
+}
+
+interface LogReg {
+  predict: (x: number[]) => number;
+  w: number[];
+}
+
+/** Logistic regression by fixed-iteration gradient descent on
+ *  standardised features: no randomness anywhere, so the fit is a pure
+ *  function of the snapshot and two runs agree byte for byte. */
+function fitLogReg(rows: Array<{ x: number[]; y: number }>): LogReg {
+  const d = 4;
+  const mu: number[] = [];
+  const sd: number[] = [];
+  for (let j = 0; j < d; j++) {
+    const col = rows.map((r) => r.x[j]!);
+    const m = col.reduce((s, v) => s + v, 0) / col.length;
+    mu.push(m);
+    sd.push(Math.sqrt(col.reduce((s, v) => s + (v - m) ** 2, 0) / col.length) || 1);
+  }
+  const w = [0, 0, 0, 0];
+  let b0 = 0;
+  const z = rows.map((r) => r.x.map((v, j) => (v - mu[j]!) / sd[j]!));
+  for (let it = 0; it < 300; it++) {
+    const gw = [0, 0, 0, 0];
+    let gb = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const zi = z[i]!;
+      const logit = b0 + zi.reduce((s, v, j) => s + v * w[j]!, 0);
+      const err = 1 / (1 + Math.exp(-logit)) - rows[i]!.y;
+      gb += err;
+      for (let j = 0; j < d; j++) gw[j]! += err * zi[j]!;
+    }
+    for (let j = 0; j < d; j++) w[j]! -= 0.3 * (gw[j]! / rows.length + 1e-3 * w[j]!);
+    b0 -= (0.3 * gb) / rows.length;
+  }
+  return {
+    w,
+    predict: (x) => 1 / (1 + Math.exp(-(b0 + x.reduce((s, v, j) => s + ((v - mu[j]!) / sd[j]!) * w[j]!, 0)))),
+  };
+}
+
+function oddsRows(snapshot: Snapshot): Array<{ x: number[]; y: number; slug: string }> {
+  return snapshot.protocols.map((p) => ({
+    x: oddsFeatures(p, snapshot.as_of),
+    y: p.gecko_id !== null || p.symbol !== null ? 1 : 0,
+    slug: p.slug,
+  }));
+}
+
+/** Fit the odds model on every protocol, and measure it cross-fitted:
+ *  five folds, each protocol's score from a fit that never saw it, so
+ *  the published AUC is an out-of-sample figure, not a fit admiring
+ *  itself. Returns the full fit (for pricing rows) and the summary. */
+export function launchOdds(snapshot: Snapshot): { summary: OddsModel; predict: (p: Protocol) => number } {
+  const rows = oddsRows(snapshot);
+  const full = fitLogReg(rows);
+  const sorted = [...rows].sort((a, b) => a.y - b.y || (a.slug < b.slug ? -1 : 1));
+  const cross = new Map<string, number>();
+  for (let f = 0; f < 5; f++) {
+    const test = sorted.filter((_, j) => j % 5 === f);
+    const train = sorted.filter((_, j) => j % 5 !== f);
+    const m = fitLogReg(train);
+    for (const r of test) cross.set(r.slug, m.predict(r.x));
+  }
+  let wins = 0;
+  let pos = 0;
+  let neg = 0;
+  const ps: number[] = [];
+  const ns: number[] = [];
+  for (const r of rows) {
+    const s = cross.get(r.slug)!;
+    if (r.y === 1) { ps.push(s); pos++; } else { ns.push(s); neg++; }
+  }
+  for (const a of ps) for (const b of ns) wins += a > b ? 1 : a === b ? 0.5 : 0;
+  const round2 = (n: number): number => Math.round(n * 100) / 100;
+  return {
+    summary: {
+      auc: Math.round((wins / (pos * neg)) * 1000) / 1000,
+      base_rate_pct: Math.round((100 * pos) / rows.length),
+      weights: { tvl: round2(full.w[0]!), chains: round2(full.w[1]!), age: round2(full.w[2]!), growth: round2(full.w[3]!) },
+    },
+    predict: (p) => full.predict(oddsFeatures(p, snapshot.as_of)),
+  };
 }
 
 /** The funnel from the snapshot's 758 protocols to the board's rows, with
@@ -491,6 +879,11 @@ export interface Row {
   watchlist: boolean;
   token_status: 'pre-token';
   implied_value_usd: number;
+  /** The fitted chance this protocol records a token at all (0..1). */
+  launch_odds: number;
+  /** implied_value_usd weighted by the launch odds: what a farmer's
+   *  attention is actually playing for, in expectation. */
+  expected_value_usd: number;
   model: Workings;
   farm_steps: string[];
   plan: PlanTotals;
@@ -508,6 +901,16 @@ export interface LiveRow {
   change_7d: number | null;
 }
 
+/** The method evidence the dashboard publishes: the fitted curve, the
+ *  ablation that chose it, and the launch-odds model's measured skill. */
+export interface MethodEvidence {
+  slope: number;
+  comps: number;
+  reference_tvl_usd: number;
+  ablation: AblationRow[];
+  odds: OddsModel;
+}
+
 /** Everything the dashboard renders. */
 export interface RadarData {
   as_of: string;
@@ -518,6 +921,7 @@ export interface RadarData {
   calibration: Calibration;
   funnel: Funnel;
   multiples: CategoryMultiple[];
+  method: MethodEvidence;
   watchlist_size: number;
   board_size: number;
   live_size: number;
@@ -529,7 +933,9 @@ export interface RadarData {
  *  passes the house rule, ranked by implied value. On this snapshot the
  *  rule admits 198 protocols, so the board is the whole rankable universe. */
 export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData } {
-  const learned = learnMultiples(snapshot);
+  const comps = buildComps(snapshot);
+  const model = fitValueModel(comps);
+  const odds = launchOdds(snapshot);
   const chosen = new Map<string, Protocol>();
   for (const p of snapshot.protocols) if (rankable(p)) chosen.set(p.slug, p);
   // Coverage is the gate's first row: a watchlist slug the rule somehow
@@ -540,10 +946,11 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
     if (p && !chosen.has(slug)) chosen.set(slug, p);
   }
   const watchlist = new Set(snapshot.watchlist);
-  const scored = [...chosen.values()].map((p) => ({ p, ...valueOf(p, snapshot.as_of, learned) }));
+  const scored = [...chosen.values()].map((p) => ({ p, ...valueOf(p, snapshot.as_of, model) }));
   scored.sort((a, b) => b.value - a.value || b.p.tvl_usd - a.p.tvl_usd || (a.p.slug < b.p.slug ? -1 : 1));
   const board: Row[] = scored.map(({ p, value, workings }, i) => {
     const plan = farmPlan(p, snapshot.as_of);
+    const launchOdds = Math.round(odds.predict(p) * 1000) / 1000;
     return {
       rank: i + 1,
       slug: p.slug,
@@ -557,6 +964,8 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
       watchlist: watchlist.has(p.slug),
       token_status: 'pre-token' as const,
       implied_value_usd: value,
+      launch_odds: launchOdds,
+      expected_value_usd: Math.round(value * launchOdds),
       model: workings,
       farm_steps: plan.steps,
       plan: plan.totals,
@@ -576,16 +985,23 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
       multiple: p.tvl_usd > 0 ? round4(p.mcap_usd! / p.tvl_usd) : 0,
       change_7d: p.change_7d,
     }));
-  const multiples = [...learned.byCategory.values()].sort((a, b) => b.samples - a.samples || (a.category < b.category ? -1 : 1));
+  const multiples = [...model.byCategory.values()].sort((a, b) => b.samples - a.samples || (a.category < b.category ? -1 : 1));
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
     floor_usd: snapshot.floor_usd,
     model_version: MODEL_VERSION,
-    global_multiple: round4(learned.global),
+    global_multiple: round4(model.globalLevel),
     calibration: calibrationOf(snapshot),
     funnel: funnelOf(snapshot),
     multiples,
+    method: {
+      slope: Math.round(model.slope * 1000) / 1000,
+      comps: model.comps,
+      reference_tvl_usd: Math.round(model.referenceTvl),
+      ablation: ablationOf(snapshot),
+      odds: odds.summary,
+    },
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     live_size: live.length,

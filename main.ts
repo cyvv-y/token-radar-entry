@@ -2,12 +2,13 @@
 //
 // The program reads the sealed DefiLlama snapshot (every protocol with TVL
 // >= $5M as of 2026-11-14), values each protocol that records no token with
-// the Launch Multiple model in lib/model.ts — the median market-cap/TVL
-// ratio its own category's traded protocols reveal, adjusted for momentum,
-// chain breadth and time run tokenless, with the plausible range its
-// category's quartile ratios imply and a leave-one-out calibration of that
-// range against the traded protocols themselves — ranks them, and writes
-// the board to board.json. It then writes the dashboard's data.js from the
+// the Launch Multiple model in lib/model.ts — a power-law curve fitted to
+// the snapshot's own traded tokens (market cap as a power of TVL, a level
+// per category, momentum at the weight a leave-one-out blind test chose),
+// with the plausible range the curve's residuals imply, a leave-one-out
+// calibration of that range and price against the traded tokens
+// themselves, and a cross-fitted logistic model of each protocol's launch
+// odds — ranks them, and writes the board to board.json. It then writes the dashboard's data.js from the
 // same board, copies this repository's dashboard/ and screenshots/ into
 // the output, and writes dossier.json last with the vendored
 // buildDossier, so the file the judge reads is exactly what the scorer

@@ -24,6 +24,13 @@ main{max-width:1180px;margin:0 auto;padding:20px 22px 40px}
   background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px 12px;overflow-x:auto;white-space:nowrap}
 .mult{margin:12px 0 2px;font-size:13px;color:var(--dim)}
 .mult b{color:var(--ink);font-family:var(--mono);font-weight:600}
+.model table.abl{width:auto;margin:10px 0 4px;font-size:13px}
+.model table.abl th{text-transform:none;letter-spacing:0;font-size:12.5px}
+.model table.abl td{padding:4px 14px 4px 8px;border-bottom:1px solid #1b221e}
+.model table.abl tbody tr{cursor:default}
+.model table.abl tbody tr:hover{background:transparent}
+.formula sup{color:var(--accent)}
+.model.compact p:not(.formula):not(.mult),.model.compact table.abl{display:none}
 .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .controls input[type=search]{flex:1 1 220px}
 .controls input,.controls select,.controls button{
