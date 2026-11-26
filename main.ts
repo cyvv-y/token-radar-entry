@@ -24,6 +24,7 @@
 // repository and the check passes on the same run.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
@@ -84,7 +85,11 @@ function main(): void {
   }
   const outDir = flag('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(join(outDir, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
+  const boardJson = `${JSON.stringify({ rows: board })}\n`;
+  // The dashboard prints this checksum so a reader can verify the board
+  // it sees is the board this program wrote, byte for byte.
+  radar.board_sha8 = createHash('sha256').update(boardJson).digest('hex').slice(0, 8);
+  writeFileSync(join(outDir, 'board.json'), boardJson);
   writeFileSync(join(outDir, 'data.js'), dataScript(radar));
 
   const page = copyFiles(join(here, 'dashboard'), join(outDir, 'dashboard'));

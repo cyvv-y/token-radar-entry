@@ -31,8 +31,8 @@ main{max-width:1180px;margin:0 auto;padding:20px 22px 40px}
 .model table.abl tbody tr:hover{background:transparent}
 .formula sup{color:var(--accent)}
 .model.compact p:not(.formula):not(.mult),.model.compact table.abl{display:none}
-.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-.controls input[type=search]{flex:1 1 220px}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.controls input[type=search]{flex:1 1 160px}
 .controls input,.controls select,.controls button{
   background:var(--panel2);color:var(--ink);border:1px solid var(--line);
   border-radius:6px;padding:8px 10px;font:inherit;font-size:14px}
@@ -44,7 +44,7 @@ main{max-width:1180px;margin:0 auto;padding:20px 22px 40px}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{ text-align:left;color:var(--faint);font-weight:600;font-size:12px;letter-spacing:.06em;
   text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
-td{padding:7px 8px;border-bottom:1px solid #1b221e;vertical-align:top}
+td{padding:5px 8px;border-bottom:1px solid #1b221e;vertical-align:top}
 tbody tr{cursor:pointer}
 tbody tr:hover{background:var(--panel2)}
 td.num,th.num{text-align:right;font-family:var(--mono);white-space:nowrap}
@@ -63,3 +63,51 @@ td.name .slug{display:block;color:var(--faint);font:400 12px var(--mono)}
 .detail li{margin:0 0 8px}
 footer{color:var(--faint);font-size:13px;max-width:82ch}
 @media (max-width:720px){ h1{font-size:24px} .panel{padding:14px} }
+
+/* v5: evidence-dense first screen — KPI strip, ledger, evidence tables. */
+.mast-in{padding:12px 22px 10px}
+h1{font-size:21px}
+.sub{margin:4px 0 0;font-size:14px}
+main{padding:10px 22px 40px}
+.panel{margin:0 0 10px}
+.panel.ledger,.panel.evidence{padding:14px 20px}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:0 0 12px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.kpi .k{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.kpi .v{font:700 17px var(--mono);margin:2px 0;color:var(--accent);white-space:nowrap}
+.kpi .s{color:var(--dim);font-size:11px;line-height:1.3}
+.ledger h2,.evidence h2{margin:0 0 8px;font-size:16px}
+.led-sub{color:var(--faint);font:400 12.5px var(--mono);margin-left:8px}
+.bar{display:flex;height:12px;border-radius:4px;overflow:hidden;border:1px solid var(--line)}
+.seg{height:100%}
+.c-rank{background:#ffb454}.c-price{background:#5fd68b}.c-unpr{background:#6b7a70}
+.c-cat{background:#ff7a6b}.c-ver{background:#c98bf5}.c-word{background:#5aa9e6}
+.legend{margin:7px 0 0;font-size:12px;color:var(--dim)}
+.legend .lg{margin-right:14px;white-space:nowrap}
+.legend .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}
+.legend b{color:var(--ink);font-family:var(--mono)}
+.checks{margin:6px 0 0;font-size:11.5px;color:var(--good);font-family:var(--mono)}
+.evgrid{display:grid;grid-template-columns:1.25fr .95fr .9fr;gap:18px}
+.evgrid h3{margin:0 0 5px;font-size:13px;color:var(--ink)}
+table.ev{width:100%;border-collapse:collapse;font-size:11.5px}
+table.ev th{text-align:left;color:var(--faint);font-weight:600;font-size:11px;
+  letter-spacing:.04em;text-transform:uppercase;padding:3px 5px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.ev td{padding:1px 5px;border-bottom:1px solid #1b221e}
+table.ev td.num,table.ev th.num{text-align:right;font-family:var(--mono);white-space:nowrap}
+table.ev tr.ship td{color:var(--accent);font-weight:600}
+.evnote{margin:6px 0 0;font-size:11.5px;color:var(--dim)}
+.evgrid sup{color:var(--accent)}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center}
+.tabs #tab-live{margin-left:auto}
+.tabs button{background:var(--panel2);color:var(--dim);border:1px solid var(--line);
+  border-radius:20px;padding:5px 12px;font-size:13px;cursor:pointer}
+.tabs button.on{border-color:var(--accent);color:var(--accent);background:rgba(255,180,84,.1)}
+.sel{color:var(--dim);font-size:14px;display:flex;gap:6px;align-items:center;white-space:nowrap}
+.pill{display:inline-block;border-radius:4px;padding:1px 7px;font:700 11px var(--mono);letter-spacing:.04em}
+.pill.farm{background:rgba(95,214,139,.16);color:var(--good)}
+.pill.marginal{background:rgba(255,180,84,.16);color:var(--accent)}
+.pill.skip{background:rgba(255,122,107,.14);color:var(--bad)}
+.net{display:block;font-size:12px}
+.rng{display:block;color:var(--faint);font-size:11.5px}
+td .slug{font-size:11.5px}
+@media (max-width:900px){ .kpis{grid-template-columns:repeat(3,1fr)} .evgrid{grid-template-columns:1fr} }

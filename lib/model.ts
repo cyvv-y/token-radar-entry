@@ -69,7 +69,7 @@ export interface Snapshot {
 }
 
 /** The model's stated version, shown on the dashboard. */
-export const MODEL_VERSION = 'launch-multiple-4';
+export const MODEL_VERSION = 'launch-multiple-5';
 
 /** How many already-trading protocols the dashboard sets aside for contrast. */
 export const LIVE_ROWS = 24;
@@ -362,6 +362,13 @@ export interface Calibration {
   /** The same median factor under a second, different blind protocol:
    *  repeated 5-fold cross-validation. Two protocols, one verdict. */
   kfold_factor_error: number;
+  /** A third, time-based blind protocol: the curve learned from the
+   *  earlier-listed half of the traded tokens prices the later-listed
+   *  half — the test a live radar actually faces, since a launch is
+   *  always priced from the past. */
+  walkforward_factor_error: number;
+  walkforward_coverage_pct: number;
+  walkforward_tested: number;
 }
 
 /** A protocol-shaped evaluation point: a traded token and the TVL base
@@ -519,6 +526,32 @@ export interface AblationRow {
   label: string;
   median_factor: number;
   spearman: number;
+  /** The same shape under the walk-forward protocol: fitted on the
+   *  earlier-listed half of the traded tokens, tested on the later half. */
+  walkforward_factor: number;
+}
+
+/** Walk-forward blind error of one fitted shape: the earlier-listed half
+ *  of the comps trains the fit, the later-listed half is priced blind.
+ *  Protocols with no listing date go to the training half, so the split
+ *  is a pure function of the snapshot. */
+function walkForwardRun(comps: EvalComp[], fit: EvalFit): { factor: number; tested: number } {
+  const dated = [...comps].sort((a, b) => {
+    const da = a.proto.listed_at ?? '';
+    const db = b.proto.listed_at ?? '';
+    return da < db ? -1 : da > db ? 1 : a.proto.slug < b.proto.slug ? -1 : 1;
+  });
+  const half = Math.floor(dated.length / 2);
+  const train = dated.slice(0, half);
+  const test = dated.slice(half);
+  const model = fit(train);
+  const errs = test
+    .map((c) => Math.abs(Math.log10(model(c.proto, c.tvl) / c.mcap)))
+    .sort((a, b) => a - b);
+  return {
+    factor: Math.round(Math.pow(10, errs[Math.floor(errs.length / 2)]!) * 100) / 100,
+    tested: test.length,
+  };
 }
 
 /** The ablation the page publishes. Every candidate term was fitted and
@@ -544,7 +577,8 @@ export function ablationOf(snapshot: Snapshot): AblationRow[] {
   ];
   return rows.map(([label, comps, fit]) => {
     const r = looRun(comps, fit);
-    return { label, median_factor: r.factor, spearman: r.spearman };
+    const w = walkForwardRun(comps, fit);
+    return { label, median_factor: r.factor, spearman: r.spearman, walkforward_factor: w.factor };
   });
 }
 
@@ -573,12 +607,35 @@ export function calibrationOf(snapshot: Snapshot): Calibration {
     const f = fitEvalPower(t, true);
     return (p, tvl) => f(p, tvl) * momentumOf(p);
   };
+  // Walk-forward on the shipped shape: earlier-listed half trains the
+  // curve, later-listed half is priced blind, range from the training
+  // fit's own residual spread.
+  const dated = [...tt].sort((a, b) => {
+    const da = a.proto.listed_at ?? '';
+    const db = b.proto.listed_at ?? '';
+    return da < db ? -1 : da > db ? 1 : a.proto.slug < b.proto.slug ? -1 : 1;
+  });
+  const half = Math.floor(dated.length / 2);
+  const wfTrain = dated.slice(0, half);
+  const wfTest = dated.slice(half);
+  const wfModel = fitValueModel(asComps(wfTrain));
+  let wfInside = 0;
+  const wfErrs: number[] = [];
+  for (const c of wfTest) {
+    const pred = curveValue(wfModel, c.tvl, c.proto.category) * momentumOf(c.proto);
+    wfErrs.push(Math.abs(Math.log10(pred / c.mcap)));
+    if (c.mcap >= pred * wfModel.residLowFactor && c.mcap <= pred * wfModel.residHighFactor) wfInside++;
+  }
+  wfErrs.sort((a, b) => a - b);
   return {
     tested: tt.length,
     range_coverage_pct: tt.length > 0 ? Math.round((100 * inside) / tt.length) : 0,
     median_factor_error: Math.round(Math.pow(10, errs[Math.floor(errs.length / 2)]!) * 100) / 100,
     spearman: Math.round(spearman(preds, actuals) * 1000) / 1000,
     kfold_factor_error: kfoldFactor(tt, fit),
+    walkforward_factor_error: Math.round(Math.pow(10, wfErrs[Math.floor(wfErrs.length / 2)]!) * 100) / 100,
+    walkforward_coverage_pct: wfTest.length > 0 ? Math.round((100 * wfInside) / wfTest.length) : 0,
+    walkforward_tested: wfTest.length,
   };
 }
 
@@ -593,6 +650,16 @@ export interface OddsModel {
   base_rate_pct: number;
   /** Standardised weights of the full fit, named for the page. */
   weights: { tvl: number; chains: number; age: number; growth: number };
+  /** Cross-fitted Brier score of the full fit: mean squared error of
+   *  the predicted chance against the recorded outcome. */
+  brier: number;
+  /** Brier of the no-skill baseline that predicts the base rate for
+   *  every protocol. */
+  base_brier: number;
+  /** One term at a time, added in the order the page names them: the
+   *  cross-fitted Brier after each addition, so a reader can see which
+   *  signals earn their keep and which do not. */
+  terms: { label: string; brier: number }[];
 }
 
 function oddsFeatures(p: Protocol, asOf: string): number[] {
@@ -612,22 +679,23 @@ interface LogReg {
 
 /** Logistic regression by fixed-iteration gradient descent on
  *  standardised features: no randomness anywhere, so the fit is a pure
- *  function of the snapshot and two runs agree byte for byte. */
-function fitLogReg(rows: Array<{ x: number[]; y: number }>): LogReg {
-  const d = 4;
+ *  function of the snapshot and two runs agree byte for byte. `keep`
+ *  names the feature indices the fit may use, for the terms table. */
+function fitLogReg(rows: Array<{ x: number[]; y: number }>, keep: number[] = [0, 1, 2, 3]): LogReg {
+  const d = keep.length;
   const mu: number[] = [];
   const sd: number[] = [];
-  for (let j = 0; j < d; j++) {
+  for (const j of keep) {
     const col = rows.map((r) => r.x[j]!);
     const m = col.reduce((s, v) => s + v, 0) / col.length;
     mu.push(m);
     sd.push(Math.sqrt(col.reduce((s, v) => s + (v - m) ** 2, 0) / col.length) || 1);
   }
-  const w = [0, 0, 0, 0];
+  const w = new Array<number>(d).fill(0);
   let b0 = 0;
-  const z = rows.map((r) => r.x.map((v, j) => (v - mu[j]!) / sd[j]!));
+  const z = rows.map((r) => keep.map((j, k) => (r.x[j]! - mu[k]!) / sd[k]!));
   for (let it = 0; it < 300; it++) {
-    const gw = [0, 0, 0, 0];
+    const gw = new Array<number>(d).fill(0);
     let gb = 0;
     for (let i = 0; i < rows.length; i++) {
       const zi = z[i]!;
@@ -641,7 +709,7 @@ function fitLogReg(rows: Array<{ x: number[]; y: number }>): LogReg {
   }
   return {
     w,
-    predict: (x) => 1 / (1 + Math.exp(-(b0 + x.reduce((s, v, j) => s + ((v - mu[j]!) / sd[j]!) * w[j]!, 0)))),
+    predict: (x) => 1 / (1 + Math.exp(-(b0 + keep.reduce((s, j, k) => s + ((x[j]! - mu[k]!) / sd[k]!) * w[k]!, 0)))),
   };
 }
 
@@ -679,11 +747,38 @@ export function launchOdds(snapshot: Snapshot): { summary: OddsModel; predict: (
   }
   for (const a of ps) for (const b of ns) wins += a > b ? 1 : a === b ? 0.5 : 0;
   const round2 = (n: number): number => Math.round(n * 100) / 100;
+  const round3 = (n: number): number => Math.round(n * 1000) / 1000;
+  const baseRate = pos / rows.length;
+  const brier = rows.reduce((s, r) => s + (cross.get(r.slug)! - r.y) ** 2, 0) / rows.length;
+  const baseBrier = rows.reduce((s, r) => s + (baseRate - r.y) ** 2, 0) / rows.length;
+  // One term at a time, in the order the page names them: the
+  // cross-fitted Brier after each addition, on the same five folds.
+  const termDefs: Array<[string, number[]]> = [
+    ['Base rate', []],
+    ['+ time tracked', [2]],
+    ['+ size (log TVL)', [2, 0]],
+    ['+ chain count', [2, 0, 1]],
+    ['+ 7-day growth', [2, 0, 1, 3]],
+  ];
+  const terms = termDefs.map(([label, keep]) => {
+    if (keep.length === 0) return { label, brier: round3(baseBrier) };
+    let sse = 0;
+    for (let f = 0; f < 5; f++) {
+      const test = sorted.filter((_, j) => j % 5 === f);
+      const train = sorted.filter((_, j) => j % 5 !== f);
+      const m = fitLogReg(train, keep);
+      for (const r of test) sse += (m.predict(r.x) - r.y) ** 2;
+    }
+    return { label, brier: round3(sse / rows.length) };
+  });
   return {
     summary: {
       auc: Math.round((wins / (pos * neg)) * 1000) / 1000,
-      base_rate_pct: Math.round((100 * pos) / rows.length),
+      base_rate_pct: Math.round(100 * baseRate),
       weights: { tvl: round2(full.w[0]!), chains: round2(full.w[1]!), age: round2(full.w[2]!), growth: round2(full.w[3]!) },
+      brier: round3(brier),
+      base_brier: round3(baseBrier),
+      terms,
     },
     predict: (p) => full.predict(oddsFeatures(p, snapshot.as_of)),
   };
@@ -911,6 +1006,19 @@ export interface MethodEvidence {
   odds: OddsModel;
 }
 
+/** The 758-protocol ledger: every protocol in exactly one group, so the
+ *  board's coverage is a recount, not a claim. `priced` counts the
+ *  tokens the snapshot prices (the comps the curve learns from);
+ *  `unpriced` counts tokens recorded with no usable market cap. */
+export interface Ledger {
+  ranked: number;
+  priced: number;
+  unpriced: number;
+  out_category: number;
+  out_version: number;
+  out_word: number;
+}
+
 /** Everything the dashboard renders. */
 export interface RadarData {
   as_of: string;
@@ -927,6 +1035,13 @@ export interface RadarData {
   live_size: number;
   rows: Row[];
   live: LiveRow[];
+  /** The ledger of all 758 protocols, the board's summed values, and the
+   *  first 8 hex of the sha256 of board.json as written — a reader can
+   *  recompute every figure on this page from the snapshot itself. */
+  ledger: Ledger;
+  total_implied_usd: number;
+  total_expected_usd: number;
+  board_sha8: string;
 }
 
 /** Build the board: every watchlist slug, plus every other protocol that
@@ -986,6 +1101,7 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
       change_7d: p.change_7d,
     }));
   const multiples = [...model.byCategory.values()].sort((a, b) => b.samples - a.samples || (a.category < b.category ? -1 : 1));
+  const funnel = funnelOf(snapshot);
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
@@ -993,7 +1109,7 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
     model_version: MODEL_VERSION,
     global_multiple: round4(model.globalLevel),
     calibration: calibrationOf(snapshot),
-    funnel: funnelOf(snapshot),
+    funnel,
     multiples,
     method: {
       slope: Math.round(model.slope * 1000) / 1000,
@@ -1007,6 +1123,17 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: RadarData
     live_size: live.length,
     rows: board,
     live,
+    ledger: {
+      ranked: board.length,
+      priced: model.comps,
+      unpriced: funnel.trading - model.comps,
+      out_category: funnel.excluded_category,
+      out_version: funnel.excluded_version,
+      out_word: funnel.excluded_word + funnel.excluded_exchange,
+    },
+    total_implied_usd: board.reduce((s, r) => s + r.implied_value_usd, 0),
+    total_expected_usd: board.reduce((s, r) => s + r.expected_value_usd, 0),
+    board_sha8: '',
   };
   return { board, radar };
 }
