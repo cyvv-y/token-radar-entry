@@ -4,16 +4,18 @@
 // board with a farm verdict per row, a per-protocol detail view with the
 // valuation workings and farm plan, and the already-trading contrast set.
 // No network, no fetch. Views are hash-addressable so they can be captured:
+//   #board=1            the board as the cover: headline sections hidden, Farm tier on
 //   #filter=<category>   the board filtered to one category
 //   #detail=<slug>       the board with that protocol's detail open
 //   #live=1              the already-trading table
+//   #tier=farm|marginal|skip   the board on one verdict tier
 (function () {
   'use strict';
   var D = window.RADAR;
   if (!D) return;
   var $ = function (id) { return document.getElementById(id); };
   var state = { q: '', cat: 'all', sort: 'implied', wl: false, live: false, detail: null,
-    tier: 'all', deposit: 1000, drop: 0.10 };
+    tier: 'all', deposit: 2500, drop: 0.07 };
 
   function money(n) {
     if (n === null || n === undefined) return 'n/a';
@@ -82,7 +84,8 @@
       'vs ×' + D.method.ablation[0].median_factor.toFixed(2) + ' flat · ' +
       D.calibration.tested + ' traded tokens, LOO') +
     card('Range holds', D.calibration.range_coverage_pct + '%',
-      'inside P25–P75 (stated 50%) · walk-fwd ' +
+      'inside P' + D.calibration.range_lo_q + '–P' + D.calibration.range_hi_q +
+      ' (stated 50%) · walk-fwd ' +
       D.calibration.walkforward_coverage_pct + '%') +
     card('Launch odds', 'AUC ' + D.method.odds.auc.toFixed(2),
       'Brier ' + D.method.odds.brier.toFixed(3) + ' vs ' + D.method.odds.base_brier.toFixed(3) +
@@ -165,7 +168,8 @@
     D.method.odds.brier.toFixed(3) + ' vs ' + D.method.odds.base_brier.toFixed(3) + ' base rate.</p></div>' +
     '<div><h3>Is the printed range honest? (stated 50%)</h3>' +
     '<table class="ev"><thead><tr><th></th><th class="num">Leave-one-out</th><th class="num">Walk-forward</th></tr></thead><tbody>' +
-    '<tr><td>Inside P25–P75</td><td class="num">' + D.calibration.range_coverage_pct +
+    '<tr><td>Inside P' + D.calibration.range_lo_q + '–P' + D.calibration.range_hi_q +
+    '</td><td class="num">' + D.calibration.range_coverage_pct +
     '%</td><td class="num">' + D.calibration.walkforward_coverage_pct + '%</td></tr>' +
     '<tr><td>Median miss (×)</td><td class="num">×' + D.calibration.median_factor_error.toFixed(2) +
     '</td><td class="num">×' + D.calibration.walkforward_factor_error.toFixed(2) + '</td></tr>' +
@@ -202,8 +206,11 @@
     '<table class="abl"><thead><tr><th>Candidate model, fitted and blind-tested</th>' +
     '<th class="num">Median miss · leave-one-out</th><th class="num">Median miss · walk-forward</th>' +
     '<th class="num">Rank ρ</th></tr></thead><tbody>' + abl2 + '</tbody></table>' +
-    '<p>Every row also carries a plausible range: the fitted price scaled by the quartiles of the curve\u2019s ' +
-    'own residuals, because the snapshot\u2019s traded ratios span 0.01× to 100× — a launch price is a spread ' +
+    '<p>Every row also carries a plausible range: the fitted price scaled by the P' +
+    D.calibration.range_lo_q + '–P' + D.calibration.range_hi_q + ' of the curve\u2019s ' +
+    'own residuals' + (D.calibration.range_lo_q < 25 ?
+    ', widened from the quartiles until the leave-one-out coverage measured \u224850% — the quartiles covered only 43% while the page claimed 50%, so the range, not the claim, moved' :
+    '') + ', because the snapshot\u2019s traded ratios span 0.01× to 100× — a launch price is a spread ' +
     'to rank by, never a price to promise. The calibration is measured, not asserted: re-pricing the ' +
     D.calibration.tested + ' traded tokens blind, each with the curve learned without it, the typical miss ' +
     'is ×' + D.calibration.median_factor_error.toFixed(2) + ' (a second protocol, repeated 5-fold, gives ×' +
@@ -237,6 +244,7 @@
     var c = verdictCounts();
     var wlCount = D.rows.filter(function (r) { return r.watchlist; }).length;
     var liveBtn = $('tab-live'); // grab before innerHTML wipes the tab row
+    var exportBtn = $('export'); // same: the export button lives here too
     var tab = function (id, label) {
       return '<button type="button" role="tab" data-tier="' + id + '"' +
         (state.tier === id && !state.wl ? ' class="on"' : '') + '>' + label + '</button>';
@@ -248,9 +256,11 @@
       tab('skip', 'Skip ' + c.SKIP) +
       '<button type="button" role="tab" data-tier="watchlist"' +
       (state.wl ? ' class="on"' : '') + '>Watchlist ' + wlCount + '</button>';
-    // The already-trading toggle lives on the tab row, not in the controls,
-    // so the controls fit on one line and the board starts higher.
+    // The already-trading toggle and the export button live on the tab
+    // row, not in the controls, so the controls fit on one line and the
+    // board starts higher.
     if (liveBtn) $('tabs').appendChild(liveBtn);
+    if (exportBtn) $('tabs').appendChild(exportBtn);
     var btns = $('tabs').querySelectorAll('button');
     for (var i = 0; i < btns.length; i++) {
       btns[i].addEventListener('click', function () {
@@ -287,27 +297,28 @@
   function renderBoard() {
     var rows = visible();
     $('count').textContent = state.live
-      ? D.live.length + ' already-trading protocols, by market cap — the evidence the curve is learned from'
+      ? D.live.length + ' already-trading tokens, by market cap — the evidence the curve is learned from; TVL is each token\u2019s total across its protocol entries'
       : rows.length + ' of ' + D.rows.length + ' protocols shown';
     $('rows').innerHTML = rows.map(function (r) {
       var v = verdict(r);
       var lo = Math.round(r.model.value_low_usd * r.launch_odds);
       var hi = Math.round(r.model.value_high_usd * r.launch_odds);
       return '<tr data-slug="' + esc(r.slug) + '">' +
-        '<td class="num">' + r.rank + '</td>' +
+        '<td class="num">' + r.rank + '<span class="rng">' + r.rank_lo + '–' + r.rank_hi + '</span></td>' +
         '<td class="name">' + esc(r.name) + (r.watchlist ? ' <span class="wl-dot" title="On the watchlist">●</span>' : '') +
-        '<span class="slug">' + esc(r.slug) + ' · ' + esc(r.category || '—') + ' · ' +
-        esc(r.chains.slice(0, 2).join(', ')) + (r.chains.length > 2 ? ' +' + (r.chains.length - 2) : '') + '</span></td>' +
+        '<span class="slug">' + esc(r.slug) + ' · ' + esc(r.category || '—') + '</span></td>' +
         '<td class="num">' + money(r.tvl_usd) + '</td>' +
         '<td class="num ' + (r.change_7d > 0 ? 'pos' : r.change_7d < 0 ? 'neg' : '') + '">' + pct(r.change_7d) + '</td>' +
         '<td class="num">' + age(r.age_days) + '</td>' +
         '<td class="num">' + Math.round(r.launch_odds * 100) + '%</td>' +
         '<td class="num"><b>' + money(r.implied_value_usd) + '</b></td>' +
-        '<td class="num"><b>' + money(r.expected_value_usd) + '</b>' +
+        '<td class="num">' + money(r.expected_value_usd) +
         '<span class="rng">' + money(lo) + '–' + money(hi) + '</span></td>' +
         '<td class="num"><span class="pill ' + v.tier.toLowerCase() + '">' + v.tier + '</span>' +
         '<span class="net">' + sgn(v.net) + '</span></td>' +
-        '<td class="num ' + (v.perHour >= 0 ? 'pos' : 'neg') + '">' + sgn(Math.round(v.perHour * 100) / 100) + '/h</td></tr>';
+        '<td class="num ' + (v.perHour >= 0 ? 'pos' : 'neg') + '">' + sgn(Math.round(v.perHour * 100) / 100) + '/h</td>' +
+        '<td><span class="plan">' + esc(r.plan.first_action) + '</span>' +
+        '<span class="rng">' + r.farm_steps.length + ' steps · ' + r.plan.hold_days + 'd</span></td></tr>';
     }).join('');
     var trs = $('rows').querySelectorAll('tr');
     for (var i = 0; i < trs.length; i++) {
@@ -325,6 +336,29 @@
     }).join('');
   }
 
+  // --- detail view ----------------------------------------------------------
+  // A farm step quotes its own cost and time in fixed words ("Cost: …
+  // Time: …"), so the plan renders as a table with the two pulled out
+  // instead of buried in prose.
+  function stepCells(s) {
+    var ci = s.indexOf('Cost: ');
+    var ti = s.indexOf('Time: ');
+    if (ci < 0 || ti < 0 || ti < ci) return { step: s, cost: '—', time: '—' };
+    return {
+      step: s.slice(0, ci).replace(/\s+$/, ''),
+      cost: s.slice(ci + 6, ti).replace(/\.\s*$/, ''),
+      time: s.slice(ti + 6).replace(/\.\s*$/, ''),
+    };
+  }
+
+  function netFor(r, dep, dr) {
+    var gross = dr * r.expected_value_usd * (dep / r.tvl_usd);
+    var charge = dep * 0.02 * (r.plan.hold_days / 365);
+    var net = gross - r.plan.gas_usd - charge;
+    var hours = (r.plan.minutes_week / 60) * (r.plan.hold_days / 7);
+    return { net: net, perHour: hours > 0 ? net / hours : 0 };
+  }
+
   function openDetail(slug) {
     var r = null;
     D.rows.forEach(function (x) { if (x.slug === slug) r = x; });
@@ -333,8 +367,95 @@
     var m = r.model;
     var v = verdict(r);
     var stat = function (k, v2) { return '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v2 + '</div></div>'; };
+    // The multiplication ladder: TVL × level × size curve × momentum =
+    // if-launches, × odds = expected. The size factor is recovered from
+    // the printed figures (effective multiple ÷ level ÷ momentum); the
+    // running values close on the printed figure to rounding.
+    var sizeFactor = m.level > 0 && m.momentum > 0 ? m.multiple / (m.level * m.momentum) : 1;
+    var run1 = r.tvl_usd * m.level;
+    var run2 = run1 * sizeFactor;
+    var run3 = run2 * m.momentum;
+    var lvlNote = m.level_samples >= 3
+      ? 'fitted from ' + m.level_samples + ' traded ' + esc(r.category || 'tokens') + ' tokens at the ' + money(D.method.reference_tvl_usd) + ' reference TVL'
+      : 'global level — too few traded ' + esc(r.category || 'tokens') + ' tokens to fit one';
+    var ladder =
+      '<h3>How the figure is made</h3>' +
+      '<table class="dt"><thead><tr><th>Step</th><th class="num">Factor</th><th class="num">Running value</th><th>Note</th></tr></thead><tbody>' +
+      '<tr><td>TVL</td><td class="num">—</td><td class="num">' + money(r.tvl_usd) + '</td><td>snapshot ' + esc(D.as_of) + '</td></tr>' +
+      '<tr><td>× Base multiple · category level</td><td class="num">×' + m.level.toFixed(2) + '</td><td class="num">' + money(run1) + '</td><td>' + lvlNote + '</td></tr>' +
+      '<tr><td>× Size curve</td><td class="num">×' + sizeFactor.toFixed(2) + '</td><td class="num">' + money(run2) + '</td><td>TVL^' + m.slope.toFixed(2) + ': a protocol ten times larger trades at about four and a half times the value</td></tr>' +
+      '<tr><td>× Momentum</td><td class="num">×' + m.momentum.toFixed(2) + '</td><td class="num">' + money(run3) + '</td><td>7-day TVL ' + pct(r.change_7d) + ' at weight 0.20</td></tr>' +
+      '<tr class="tot"><td>= If it launches</td><td class="num">—</td><td class="num">' + money(r.implied_value_usd) + '</td><td>the board\u2019s implied value</td></tr>' +
+      '<tr><td>× Launch odds</td><td class="num">×' + r.launch_odds.toFixed(2) + '</td><td class="num">' + money(r.expected_value_usd) + '</td><td>logistic model, cross-fitted AUC ' + D.method.odds.auc.toFixed(2) + '</td></tr>' +
+      '<tr class="tot"><td>= Expected value</td><td class="num">—</td><td class="num">' + money(r.expected_value_usd) + '</td><td>what a farmer is playing for</td></tr>' +
+      '<tr><td>Chain breadth · maturity</td><td class="num">×1.00</td><td class="num">—</td><td>tested, not used — both made the blind error worse</td></tr>' +
+      '</tbody></table>';
+    // The seven nearest already-priced tokens: same category first,
+    // then closest in size. Their model multiples are in-sample prices
+    // from the fitted curve, a neighbour check — the blind numbers are
+    // in the evidence tables above.
+    var compRows = (r.near || []).map(function (ci) {
+      var c = D.comps[ci];
+      if (!c) return '';
+      return '<tr><td class="name">' + esc(c.name) + '</td>' +
+        '<td>' + esc(c.category) + '</td>' +
+        '<td class="num">' + money(c.tvl) + '</td>' +
+        '<td class="num">' + money(c.mcap) + '</td>' +
+        '<td class="num">×' + (c.mcap / c.tvl).toFixed(2) + '</td>' +
+        '<td class="num">×' + (c.pred / c.tvl).toFixed(2) + '</td></tr>';
+    }).join('');
+    var compsTbl =
+      '<h3>Nearest priced comps — what the curve learned from</h3>' +
+      '<table class="dt"><thead><tr><th>Token</th><th>Category</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">Actual ×</th><th class="num">Model ×</th></tr></thead><tbody>' +
+      compRows + '</tbody></table>' +
+      '<p class="evnote">Same category first, then closest in size. Model × is the fitted curve\u2019s price for that token, fitted with it included — a neighbour check, not a blind test.</p>';
+    // Net payoff across drop shares and ticket sizes, at this row's own
+    // gas and hold. The highlighted row is the current drop share; the
+    // caption states the current ticket, which may sit between columns.
+    var tickets = [1000, 5000, 25000];
+    var drops = [0.035, 0.07, 0.14];
+    var matrix =
+      '<h3>Net payoff — drop share × ticket</h3>' +
+      '<table class="dt matrix"><thead><tr><th>Drop \\ ticket</th>' +
+      tickets.map(function (t) { return '<th class="num">$' + t.toLocaleString('en-US') + '</th>'; }).join('') +
+      '</tr></thead><tbody>' +
+      drops.map(function (dr) {
+        return '<tr' + (Math.abs(dr - state.drop) < 1e-9 ? ' class="cur"' : '') + '><td>' +
+          (Math.round(dr * 1000) / 10) + '%' + (Math.abs(dr - state.drop) < 1e-9 ? ' · current' : '') + '</td>' +
+          tickets.map(function (t) {
+            var n = netFor(r, t, dr);
+            return '<td class="num ' + (n.net >= 0 ? 'pos' : 'neg') + '">' + sgn(Math.round(n.net)) +
+              ' · ' + sgn(Math.round(n.perHour * 100) / 100) + '/h</td>';
+          }).join('') + '</tr>';
+      }).join('') + '</tbody></table>';
+    var bracket;
+    if (tickets.indexOf(state.deposit) >= 0) {
+      bracket = 'the $' + state.deposit.toLocaleString('en-US') + ' column';
+    } else {
+      var below = null;
+      var above = null;
+      tickets.forEach(function (t) {
+        if (t < state.deposit) below = t;
+        if (t > state.deposit && above === null) above = t;
+      });
+      bracket = below && above
+        ? 'between the $' + below.toLocaleString('en-US') + ' and $' + above.toLocaleString('en-US') + ' columns'
+        : state.deposit < tickets[0]
+          ? 'below the $' + tickets[0].toLocaleString('en-US') + ' column'
+          : 'above the $' + tickets[tickets.length - 1].toLocaleString('en-US') + ' column';
+    }
+    var matrixNote = '<p class="evnote">Current scenario — $' + state.deposit.toLocaleString('en-US') +
+      ' at ' + Math.round(state.drop * 100) + '%: net ' + sgn(Math.round(v.net)) + ', ' +
+      sgn(Math.round(v.perHour * 100) / 100) + ' an hour (' + v.tier + '). The ticket falls ' + bracket +
+      '; the highlighted row is the current drop share.</p>';
+    var farmTbl = '<table class="dt farm"><thead><tr><th>#</th><th>Step</th><th>Cost</th><th>Time</th></tr></thead><tbody>' +
+      r.farm_steps.map(function (s, i) {
+        var c = stepCells(s);
+        return '<tr><td class="num">' + (i + 1) + '</td><td>' + esc(c.step) + '</td><td>' + esc(c.cost) + '</td><td>' + esc(c.time) + '</td></tr>';
+      }).join('') + '</tbody></table>';
     $('detail').innerHTML =
       '<h2>' + esc(r.name) + '<span class="slug">' + esc(r.slug) + ' · rank #' + r.rank +
+      ' · 90% rank interval ' + r.rank_lo + '–' + r.rank_hi +
       (r.watchlist ? ' · on the watchlist' : '') + '</span></h2>' +
       '<div class="grid">' +
       stat('Implied value', money(r.implied_value_usd)) +
@@ -342,17 +463,16 @@
       stat('Launch odds', Math.round(r.launch_odds * 100) + '%') +
       stat('Plausible range', money(m.value_low_usd) + ' – ' + money(m.value_high_usd)) +
       stat('TVL', money(r.tvl_usd)) +
-      stat('Effective multiple', '×' + m.multiple.toFixed(2)) + stat('Category level', '×' + m.level.toFixed(2)) +
-      stat('Curve slope', 'TVL^' + m.slope.toFixed(2)) + stat('Momentum', '×' + m.momentum.toFixed(2)) +
       stat('Time tokenless', age(r.age_days)) + stat('7-day TVL', pct(r.change_7d)) + '</div>' +
+      ladder + compsTbl + matrix + matrixNote +
       '<p class="work">' + esc(r.name) + ' is priced from its own figures on the fitted curve: across the ' +
       'snapshot\u2019s traded tokens, market cap scales as TVL^' + m.slope.toFixed(2) + ', so its ' +
       money(r.tvl_usd) + ' of TVL prices at an effective ×' + m.multiple.toFixed(2) + ' — its category level ' +
       'is ×' + m.level.toFixed(2) + ' — ' + esc(m.multiple_source) + ' — then ×' + m.momentum.toFixed(2) +
       ' for its 7-day momentum. It has run ' + age(r.age_days) + ' with no token recorded' +
       (r.listed_at ? ' (tracked since ' + esc(r.listed_at) + ')' : '') + ' on ' + r.chains.length +
-      ' chain' + (r.chains.length === 1 ? '' : 's') + ' (' + esc(r.chains.join(', ')) + '). Scaled by the ' +
-      'quartiles of the curve\u2019s own residuals, the same figures give ' + money(m.value_low_usd) + ' to ' +
+      ' chain' + (r.chains.length === 1 ? '' : 's') + ' (' + esc(r.chains.join(', ')) + '). Scaled by the P' +
+      D.calibration.range_lo_q + '–P' + D.calibration.range_hi_q + ' of the curve\u2019s own residuals, the same figures give ' + money(m.value_low_usd) + ' to ' +
       money(m.value_high_usd) + ' — the spread the fit actually scatters by, printed because a single figure ' +
       'would pretend to a precision the data does not hold.</p>' +
       '<h2>Farm plan</h2>' +
@@ -367,7 +487,7 @@
       ' of gas and capital charge — net ' + sgn(Math.round(v.net)) + ', ' +
       sgn(Math.round(v.perHour * 100) / 100) + ' an hour (' + v.tier + '). Change the deposit or drop share ' +
       'above and this verdict recomputes.</p>' +
-      '<ol>' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
+      farmTbl;
     $('detail').hidden = false;
     $('detail').scrollIntoView();
   }
@@ -406,6 +526,25 @@
   $('deposit').addEventListener('change', function () { state.deposit = Number(this.value); refreshVerdicts(); });
   $('drop').addEventListener('change', function () { state.drop = Number(this.value); refreshVerdicts(); });
   $('tab-live').addEventListener('click', function () { showLive(!state.live); });
+  // Export the rows currently shown (filters and sort apply) as CSV, so
+  // a reader can take the board elsewhere without retyping it.
+  $('export').addEventListener('click', function () {
+    var rows = visible();
+    var q = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
+    var head = 'rank,rank_lo,rank_hi,slug,name,category,tvl_usd,implied_value_usd,expected_value_usd,launch_odds,verdict,net_usd,net_per_hour_usd,farm_first_action,farm_steps,farm_hold_days\n';
+    var body = rows.map(function (r) {
+      var vv = verdict(r);
+      return [r.rank, r.rank_lo, r.rank_hi, q(r.slug), q(r.name), q(r.category || ''), r.tvl_usd,
+        r.implied_value_usd, r.expected_value_usd, r.launch_odds, vv.tier, Math.round(vv.net),
+        Math.round(vv.perHour * 100) / 100, q(r.plan.first_action), r.farm_steps.length, r.plan.hold_days].join(',');
+    }).join('\n');
+    var blob = new Blob([head + body + '\n'], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'token-launch-radar.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
 
   renderTabs();
   renderLive();
@@ -421,9 +560,18 @@
   function hideTop() { top.forEach(function (id) { $(id).style.display = 'none'; }); }
   if (hash.filter && cats.indexOf(hash.filter) >= 0) { state.cat = hash.filter; $('cat').value = hash.filter; renderBoard(); }
   if (hash.live === '1') showLive(true);
+  if (hash.tier && ['farm', 'marginal', 'skip'].indexOf(hash.tier) >= 0) {
+    state.tier = hash.tier; state.wl = false; renderTabs(); renderBoard();
+  }
   // Screenshot framing for the filtered and live views: hide the headline
   // sections so a fixed-size capture frames the table it is evidence of.
   if (hash.filter || hash.live === '1') hideTop();
+  // The cover framing: hide the headline sections and show the Farm tier,
+  // so the first screen is the board itself — ten-plus rows, with the
+  // green FARM rows on top — instead of the headline sections and a
+  // first screen of red SKIP rows. The full board is the default view
+  // without the hash; the rank column still shows each row's board rank.
+  if (hash.board === '1') { hideTop(); state.tier = 'farm'; state.wl = false; renderTabs(); renderBoard(); }
   if (hash.detail) {
     // Screenshot mode: bring the detail to the top of the page instead of
     // scrolling to it, so a fixed-size capture frames it exactly.

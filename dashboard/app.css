@@ -110,4 +110,19 @@ table.ev tr.ship td{color:var(--accent);font-weight:600}
 .net{display:block;font-size:12px}
 .rng{display:block;color:var(--faint);font-size:11.5px}
 td .slug{font-size:11.5px}
+/* v6: detail tables — the figure's ladder, nearest comps, payoff matrix,
+   farm steps with cost and time pulled out of the prose. Compact on
+   purpose: the detail screenshot must show the ladder, the comps and the
+   matrix in one 900px frame. */
+.detail .grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.detail h3{margin:12px 0 3px;font-size:14px}
+.detail table.dt{width:100%;font-size:12.5px;margin:4px 0 8px}
+.detail table.dt th{padding:2px 8px;font-size:11px}
+.detail table.dt td{padding:2px 8px;border-bottom:1px solid #1b221e}
+.detail table.dt tbody tr{cursor:default}
+.detail table.dt tbody tr:hover{background:transparent}
+.detail table.dt tr.tot td{font-weight:700;color:var(--ink)}
+.detail table.dt tr.cur td{background:rgba(255,180,84,.07)}
+.detail table.dt td .rng{font-size:11px}
+.plan{display:block;font-weight:600}
 @media (max-width:900px){ .kpis{grid-template-columns:repeat(3,1fr)} .evgrid{grid-template-columns:1fr} }
